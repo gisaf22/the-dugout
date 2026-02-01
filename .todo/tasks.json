@@ -1,0 +1,14 @@
+[
+	{
+		"id": 1,
+		"title": "Switch codebase to src layout",
+		"description": "Move FADE package into src/, remove legacy package, ensure tests load via src path",
+		"status": "complete"
+	},
+	{
+		"id": 2,
+		"title": "Rename DataAgent to DataReader",
+		"description": "Update module/class names, imports, tests, and ADK config to use DataReader",
+		"status": "complete"
+	}
+]

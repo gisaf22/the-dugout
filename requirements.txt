@@ -1,0 +1,28 @@
+# Core ML & Data
+pydantic
+sqlite-utils
+pandas
+numpy
+scipy
+scikit-learn
+lightgbm
+joblib
+
+# Optimization
+pulp
+
+# Utilities
+rich
+
+# Web Interface
+streamlit
+plotly
+
+# Testing
+pytest
+
+# --- DEFERRED (uncomment when adding agentic features) ---
+# fastapi
+# uvicorn[standard]
+# httpx
+# google-adk

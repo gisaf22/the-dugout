@@ -1,0 +1,57 @@
+name: FPL Data Pull
+
+on:
+  # Run every 6 hours (catches most GW endings + buffer)
+  schedule:
+    - cron: '0 */6 * * *'
+  
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      gameweek:
+        description: 'Specific gameweek to pull (leave empty for current)'
+        required: false
+        type: number
+      force:
+        description: 'Force pull regardless of timing'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  pull-data:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Install dependencies
+        run: |
+          pip install requests
+      
+      - name: Pull FPL data
+        env:
+          DUGOUT_DB_PATH: data/fpl_2025_26.sqlite
+        run: |
+          ARGS=""
+          if [ -n "${{ github.event.inputs.gameweek }}" ]; then
+            ARGS="--gw ${{ github.event.inputs.gameweek }}"
+          fi
+          if [ "${{ github.event.inputs.force }}" == "true" ]; then
+            ARGS="$ARGS --force"
+          fi
+          python scripts/pull_fpl_data.py $ARGS
+      
+      - name: Commit updated database
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add data/fpl_current_season.sqlite
+          git diff --staged --quiet || git commit -m "🔄 Auto-update FPL data $(date +'%Y-%m-%d %H:%M')"
+          git push
