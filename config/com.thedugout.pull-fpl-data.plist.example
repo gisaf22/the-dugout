@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.thedugout.pull-fpl-data</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/YOUR_USERNAME/.pyenv/versions/3.10.14/bin/python</string>
+        <string>/path/to/the-dugout/scripts/ops/pull_fpl_data.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/path/to/the-dugout</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONPATH</key>
+        <string>/path/to/the-dugout/src</string>
+        <key>DUGOUT_DB_PATH</key>
+        <string>/path/to/the-dugout/storage/fpl_2025_26.sqlite</string>
+    </dict>
+
+    <!-- Run on login -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Run every 6 hours (21600 seconds) -->
+    <key>StartInterval</key>
+    <integer>21600</integer>
+
+    <!-- Wait for network -->
+    <key>NetworkState</key>
+    <true/>
+
+    <!-- Logging -->
+    <key>StandardOutPath</key>
+    <string>/Users/YOUR_USERNAME/Library/Logs/the-dugout/pull_fpl_data.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOUR_USERNAME/Library/Logs/the-dugout/pull_fpl_data.error.log</string>
+</dict>
+</plist>

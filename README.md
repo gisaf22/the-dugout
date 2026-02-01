@@ -1,6 +1,6 @@
 # The Dugout
 
-Decision support for Fantasy Premier League.
+Decision support for Fantasy Premier League Managers.
 
 Pick the highest expected scorer. That's it.
 

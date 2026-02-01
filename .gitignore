@@ -39,3 +39,4 @@ Thumbs.db
 # Environment variables
 .env
 .env.local
+config/com.thedugout.pull-fpl-data.plist
