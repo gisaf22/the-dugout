@@ -133,10 +133,13 @@ def get_transfer_recommendations(
             "Transfer decision must use argmax(predicted_points) only."
         )
     
+    # Add fixture display info (DISPLAY ONLY - not used in ranking)
+    latest_df = reader.enrich_with_fixture_display(latest_df, gw=target_gw, team_col="team_id")
+    
     # Frozen decision rule: argmax(predicted_points)
     # Get top recommendations
     recommendations = latest_df.nlargest(top_n, "predicted_points")[
-        ["player_id", "player_name", "team_name", "position", "predicted_points", "now_cost"]
+        ["player_id", "player_name", "team_name", "position", "predicted_points", "now_cost", "opponent_short", "is_home"]
     ].copy()
     
     # Add model_type to output for logging

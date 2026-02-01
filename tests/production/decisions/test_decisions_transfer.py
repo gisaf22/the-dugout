@@ -22,6 +22,14 @@ from dugout.production.decisions.transfer import (
 )
 
 
+def _mock_enrich_fixture(df, gw, team_col="team_id"):
+    """Test helper: adds fixture display columns without actual fixtures."""
+    df = df.copy()
+    df["opponent_short"] = "TST"
+    df["is_home"] = True
+    return df
+
+
 class TestTransferRanksbyPredictedPointsOnly:
     """Transfer-in must rank by argmax(predicted_points) only."""
 
@@ -54,6 +62,7 @@ class TestTransferRanksbyPredictedPointsOnly:
             "status": ["a", "a", "a", "a", "a"] * 6,
         })
         mock_reader.get_all_gw_data.return_value = raw_data
+        mock_reader.enrich_with_fixture_display.side_effect = _mock_enrich_fixture
         
         # Get recommendations for GW 7 (using data through GW 6)
         recs, target_gw, model_type = get_transfer_recommendations(
@@ -101,6 +110,7 @@ class TestTransferHonorsExcludeIds:
             "status": ["a"] * 30,
         })
         mock_reader.get_all_gw_data.return_value = raw_data
+        mock_reader.enrich_with_fixture_display.side_effect = _mock_enrich_fixture
         
         # Exclude players 1 and 2 (our current squad)
         recs, _, _ = get_transfer_recommendations(
@@ -141,6 +151,7 @@ class TestTransferHonorsExcludeIds:
             "status": ["a"] * 12,
         })
         mock_reader.get_all_gw_data.return_value = raw_data
+        mock_reader.enrich_with_fixture_display.side_effect = _mock_enrich_fixture
         
         recs, _, _ = get_transfer_recommendations(gw=7, top_n=5, reader=mock_reader)
         

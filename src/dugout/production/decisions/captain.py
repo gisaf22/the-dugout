@@ -116,9 +116,12 @@ def get_captain_candidates(
     latest_df["predicted_points"] = predict_points(latest_df)
     model_type = get_last_model_type()
     
+    # Add fixture display info (DISPLAY ONLY - not used in ranking)
+    latest_df = reader.enrich_with_fixture_display(latest_df, gw=target_gw, team_col="team_id")
+    
     # Get top candidates
     candidates = latest_df.nlargest(top_n, "predicted_points")[
-        ["player_id", "player_name", "team_name", "position", "predicted_points"]
+        ["player_id", "player_name", "team_name", "position", "predicted_points", "opponent_short", "is_home"]
     ].copy()
     
     # Add model_type to output for logging

@@ -85,12 +85,15 @@ st.sidebar.divider()
 st.sidebar.caption("Decision Rule: `argmax(expected_points)`")
 st.sidebar.caption("Research-validated. No heuristics.")
 
-with st.sidebar.expander("ℹ️ About"):
+with st.sidebar.expander("ℹ️ How to use this"):
     st.markdown("""
-    - Trained on historical FPL data
-    - Validated via walk-forward regret analysis
-    - Optimized for decision quality, not accuracy
-    - If two players are within ~0.5 pts, treat as equivalent
+    This tool helps you **choose between players**, not predict exact scores.
+    
+    - Picks are based on **expected points** for the upcoming gameweek
+    - If two players are within **~0.5 pts**, treat them as equal
+    - Use your own judgement for late injury news and rotation risk
+    
+    Designed to **reduce bad decisions over time**, not guarantee wins.
     """)
 
 # -----------------------------------------------------------------------------
@@ -123,6 +126,8 @@ def render_captain_page(gw: int):
 
     display_df = candidates.copy()
     display_df["Rank"] = range(1, len(display_df) + 1)
+    display_df["vs"] = display_df["opponent_short"]
+    display_df["H/A"] = display_df["is_home"].map(lambda x: "H" if x else "A")
 
     st.dataframe(
         display_df.rename(columns={
@@ -130,7 +135,7 @@ def render_captain_page(gw: int):
             "team_name": "Team",
             "position": "Pos",
             "predicted_points": "Expected Pts",
-        })[["Rank", "Player", "Team", "Pos", "Expected Pts"]],
+        })[["Rank", "Player", "Team", "vs", "H/A", "Pos", "Expected Pts"]],
         hide_index=True,
         use_container_width=True,
     )
@@ -167,6 +172,8 @@ def render_transfers_page(gw: int):
     display_df = recs.copy()
     display_df["Rank"] = range(1, len(display_df) + 1)
     display_df["Price"] = display_df["now_cost"].map(lambda x: f"£{x:.1f}m")
+    display_df["vs"] = display_df["opponent_short"]
+    display_df["H/A"] = display_df["is_home"].map(lambda x: "H" if x else "A")
 
     st.dataframe(
         display_df.rename(columns={
@@ -174,7 +181,7 @@ def render_transfers_page(gw: int):
             "team_name": "Team",
             "position": "Pos",
             "predicted_points": "Expected Pts",
-        })[["Rank", "Player", "Team", "Pos", "Expected Pts", "Price"]],
+        })[["Rank", "Player", "Team", "vs", "H/A", "Pos", "Expected Pts", "Price"]],
         hide_index=True,
         use_container_width=True,
     )
@@ -210,6 +217,8 @@ def render_free_hit_page(gw: int):
             "Pos": p.get("pos"),
             "Player": p.get("name"),
             "Team": p.get("team"),
+            "vs": p.get("opponent", ""),
+            "H/A": "H" if p.get("is_home") else "A",
             "Cost": f"£{p.get('cost', 0):.1f}m",
             "Expected Pts": f"{p.get('ev', 0):.2f}",
         }

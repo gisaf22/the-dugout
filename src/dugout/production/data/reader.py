@@ -178,6 +178,54 @@ class DataReader:
             opponent_map[(f["team_a"], gw)] = (f["team_h"], 0)
         return opponent_map
 
+    def get_fixture_display_map(self, gw: int) -> Dict[int, Dict[str, Any]]:
+        """Get fixture display info for a gameweek (opponent_short, is_home).
+        
+        This is for DISPLAY ONLY - not used in predictions or rankings.
+        
+        Args:
+            gw: Target gameweek
+            
+        Returns:
+            Dict mapping team_id -> {"opponent_short": str, "is_home": bool}
+        """
+        fixtures = self.get_fixtures(gw=gw)
+        teams = self.get_teams()
+        team_short = {t["id"]: t["short_name"] for t in teams}
+        
+        fixture_map = {}
+        for f in fixtures:
+            h, a = f["team_h"], f["team_a"]
+            fixture_map[h] = {"opponent_short": team_short.get(a, "?"), "is_home": True}
+            fixture_map[a] = {"opponent_short": team_short.get(h, "?"), "is_home": False}
+        return fixture_map
+
+    def enrich_with_fixture_display(
+        self,
+        df: pd.DataFrame,
+        gw: int,
+        team_col: str = "team_id",
+    ) -> pd.DataFrame:
+        """Add opponent_short and is_home columns for display only.
+        
+        Args:
+            df: DataFrame with team column
+            gw: Target gameweek for fixtures
+            team_col: Column name containing team_id (default: "team_id")
+            
+        Returns:
+            DataFrame with opponent_short and is_home columns added
+        """
+        fixture_map = self.get_fixture_display_map(gw)
+        df = df.copy()
+        df["opponent_short"] = df[team_col].map(
+            lambda x: fixture_map.get(x, {}).get("opponent_short", "?")
+        )
+        df["is_home"] = df[team_col].map(
+            lambda x: fixture_map.get(x, {}).get("is_home", False)
+        )
+        return df
+
     def is_home_fixture(self, team_id: int, gw: int) -> int:
         """Check if team plays at home in given GW.
         
