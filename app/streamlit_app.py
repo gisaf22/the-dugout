@@ -1,7 +1,6 @@
 """The Dugout - FPL Decision Support Dashboard.
 
-Minimal Streamlit MVP: Captain, Transfers, Free Hit.
-Uses frozen decision functions from dugout.production.decisions.
+Three decisions, one rule: argmax(predicted_points).
 
 Usage:
     streamlit run app/streamlit_app.py
@@ -16,15 +15,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 import streamlit as st
 import pandas as pd
 
-# Page config - must be first Streamlit command
-st.set_page_config(
-    page_title="The Dugout",
-    page_icon="⚽",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-# Import decision functions
 from dugout.production.decisions import (
     get_captain_candidates,
     pick_captain,
@@ -32,18 +22,41 @@ from dugout.production.decisions import (
     optimize_free_hit,
 )
 
+# -----------------------------------------------------------------------------
+# Config
+# -----------------------------------------------------------------------------
 
+TOP_N = 10
+
+DISCLAIMER = """
+⚠️ **Small differences (<0.5 pts) are noise.**  
+This is decision support, not a guarantee.
+"""
+
+st.set_page_config(
+    page_title="The Dugout",
+    page_icon="⚽",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# -----------------------------------------------------------------------------
+# Helpers
+# -----------------------------------------------------------------------------
+
+@st.cache_data(ttl=3600)
 def get_current_gw() -> int:
-    """Get the next gameweek to predict."""
+    """Infer next gameweek from available data."""
     from dugout.production.data.reader import DataReader
+
     reader = DataReader()
     raw_df = reader.get_all_gw_data()
-    return int(raw_df["gw"].max()) + 1
+    max_gw = int(raw_df["gw"].max())
+    return min(max_gw + 1, 38)
 
-
-# =============================================================================
+# -----------------------------------------------------------------------------
 # Sidebar
-# =============================================================================
+# -----------------------------------------------------------------------------
 
 st.sidebar.title("⚽ The Dugout")
 st.sidebar.caption("Decision support for FPL managers")
@@ -56,225 +69,173 @@ page = st.sidebar.radio(
 
 st.sidebar.divider()
 
-# Gameweek selector
 try:
     default_gw = get_current_gw()
 except Exception:
     default_gw = 23
 
-gw = st.sidebar.number_input("Gameweek", min_value=1, max_value=38, value=default_gw)
+gw = st.sidebar.number_input(
+    "Gameweek",
+    min_value=1,
+    max_value=38,
+    value=default_gw,
+)
 
 st.sidebar.divider()
 st.sidebar.caption("Decision Rule: `argmax(expected_points)`")
 st.sidebar.caption("Research-validated. No heuristics.")
 
+with st.sidebar.expander("ℹ️ About"):
+    st.markdown("""
+    - Trained on historical FPL data
+    - Validated via walk-forward regret analysis
+    - Optimized for decision quality, not accuracy
+    - If two players are within ~0.5 pts, treat as equivalent
+    """)
 
-# =============================================================================
+# -----------------------------------------------------------------------------
 # Captain Page
-# =============================================================================
+# -----------------------------------------------------------------------------
 
 def render_captain_page(gw: int):
     st.header("👑 Captain Recommendation")
-    st.caption(f"GW{gw} · Decision: argmax(predicted_points)")
-    
+    st.caption(f"GW{gw} · argmax(predicted_points)")
+    st.info(DISCLAIMER)
+
     with st.spinner("Loading predictions..."):
-        try:
-            candidates, target_gw = get_captain_candidates(gw=gw, top_n=10)
-        except Exception as e:
-            st.error(f"Error: {e}")
-            return
-    
+        candidates, _, model_type = get_captain_candidates(gw=gw, top_n=TOP_N)
+
     if candidates.empty:
         st.warning("No available players found")
         return
-    
-    # Pick captain
+
     captain = pick_captain(candidates)
-    
-    # Hero card
+
     col1, col2, col3 = st.columns([2, 1, 1])
-    with col1:
-        st.metric(
-            label="🎯 Captain",
-            value=captain["player_name"],
-            delta=f"{captain['predicted_points']:.2f} pts",
-        )
-    with col2:
-        st.metric("Team", captain["team_name"])
-    with col3:
-        st.metric("Position", captain["position"])
-    
+    col1.metric("🎯 Captain", captain["player_name"], f"{captain['predicted_points']:.2f} pts")
+    col2.metric("Team", captain["team_name"])
+    col3.metric("Position", captain["position"])
+
+    st.caption(f"Model: {model_type}")
     st.divider()
-    
-    # Top candidates table
-    st.subheader("Top 10 Candidates")
-    
+
+    st.subheader(f"Top {TOP_N} Candidates")
+
     display_df = candidates.copy()
     display_df["Rank"] = range(1, len(display_df) + 1)
-    display_df = display_df.rename(columns={
-        "player_name": "Player",
-        "team_name": "Team",
-        "position": "Pos",
-        "predicted_points": "Expected Pts",
-    })
-    
+
     st.dataframe(
-        display_df[["Rank", "Player", "Team", "Pos", "Expected Pts"]],
+        display_df.rename(columns={
+            "player_name": "Player",
+            "team_name": "Team",
+            "position": "Pos",
+            "predicted_points": "Expected Pts",
+        })[["Rank", "Player", "Team", "Pos", "Expected Pts"]],
         hide_index=True,
         use_container_width=True,
     )
-    
-    # Guidance
-    with st.expander("📋 Interpretation Guidance"):
-        st.markdown("""
-        - **Small differences (<0.5 pts) = noise** — don't overthink
-        - **Override only for**: confirmed injury, suspension, verified news
-        - This is **decision-support**, not a guarantee
-        """)
 
-
-# =============================================================================
+# -----------------------------------------------------------------------------
 # Transfers Page
-# =============================================================================
+# -----------------------------------------------------------------------------
 
 def render_transfers_page(gw: int):
     st.header("⬆️ Transfer-In Recommendations")
-    st.caption(f"GW{gw} · Decision: argmax(predicted_points)")
-    
-    # Options
-    col1, col2 = st.columns(2)
-    with col1:
-        top_n = st.slider("Number of recommendations", 5, 20, 10)
-    
+    st.caption(f"GW{gw} · argmax(predicted_points)")
+    st.info(DISCLAIMER)
+
     with st.spinner("Loading predictions..."):
-        try:
-            recommendations, target_gw = get_transfer_recommendations(
-                gw=gw, top_n=top_n
-            )
-        except Exception as e:
-            st.error(f"Error: {e}")
-            return
-    
-    if recommendations.empty:
+        recs, _, model_type = get_transfer_recommendations(gw=gw, top_n=TOP_N)
+
+    if recs.empty:
         st.warning("No available players found")
         return
-    
-    # Best pick
-    best = recommendations.iloc[0]
-    
+
+    best = recs.iloc[0]
+
     col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
-    with col1:
-        st.metric(
-            label="🎯 Top Transfer-In",
-            value=best["player_name"],
-            delta=f"{best['predicted_points']:.2f} pts",
-        )
-    with col2:
-        st.metric("Team", best["team_name"])
-    with col3:
-        st.metric("Position", best["position"])
-    with col4:
-        st.metric("Price", f"£{best['now_cost']:.1f}m")
-    
+    col1.metric("🎯 Top Transfer-In", best["player_name"], f"{best['predicted_points']:.2f} pts")
+    col2.metric("Team", best["team_name"])
+    col3.metric("Position", best["position"])
+    col4.metric("Price", f"£{best['now_cost']:.1f}m")
+
+    st.caption(f"Model: {model_type}")
     st.divider()
-    
-    # Recommendations table
-    st.subheader(f"Top {top_n} Recommendations")
-    
-    display_df = recommendations.copy()
+
+    st.subheader(f"Top {TOP_N} Recommendations")
+
+    display_df = recs.copy()
     display_df["Rank"] = range(1, len(display_df) + 1)
-    display_df["Price"] = display_df["now_cost"].apply(lambda x: f"£{x:.1f}m")
-    display_df = display_df.rename(columns={
-        "player_name": "Player",
-        "team_name": "Team",
-        "position": "Pos",
-        "predicted_points": "Expected Pts",
-    })
-    
+    display_df["Price"] = display_df["now_cost"].map(lambda x: f"£{x:.1f}m")
+
     st.dataframe(
-        display_df[["Rank", "Player", "Team", "Pos", "Expected Pts", "Price"]],
+        display_df.rename(columns={
+            "player_name": "Player",
+            "team_name": "Team",
+            "position": "Pos",
+            "predicted_points": "Expected Pts",
+        })[["Rank", "Player", "Team", "Pos", "Expected Pts", "Price"]],
         hide_index=True,
         use_container_width=True,
     )
 
-
-# =============================================================================
+# -----------------------------------------------------------------------------
 # Free Hit Page
-# =============================================================================
+# -----------------------------------------------------------------------------
 
 def render_free_hit_page(gw: int):
     st.header("🚀 Free Hit Optimizer")
-    st.caption(f"GW{gw} · Maximize Σ(predicted_points)")
-    
-    # Budget slider
-    budget = st.slider("Budget (£m)", 95.0, 105.0, 100.0, 0.5)
-    
+    st.caption(f"GW{gw} · maximize Σ(predicted_points)")
+    st.info(DISCLAIMER)
+
     with st.spinner("Optimizing squad..."):
-        try:
-            result, df, target_gw = optimize_free_hit(gw=gw, budget=budget)
-        except Exception as e:
-            st.error(f"Error: {e}")
-            return
-    
+        result, _, _, model_type = optimize_free_hit(gw=gw, budget=100.0)
+
     if result is None:
         st.error("Optimization failed")
         return
-    
-    # Summary metrics
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total EV", f"{result.total_ev:.1f} pts")
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Expected Pts", f"{result.total_ev:.1f}")
     col2.metric("Formation", result.formation)
     col3.metric("Cost", f"£{result.total_cost:.1f}m")
-    col4.metric("ITB", f"£{budget - result.total_cost:.1f}m")
-    
+
+    st.caption(f"Model: {model_type}")
     st.divider()
-    
-    # Captain/Vice
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown(f"**👑 Captain:** {result.captain['name']}")
-    with col2:
-        st.markdown(f"**🥈 Vice:** {result.vice_captain['name']}")
-    
-    st.divider()
-    
-    # Starting XI
+
     st.subheader("Starting XI")
-    
-    xi_data = []
-    for p in result.starting_xi:
-        xi_data.append({
-            "Pos": p.get("pos", ""),
-            "Player": p.get("name", ""),
-            "Team": p.get("team", ""),
-            "vs": p.get("fixture_opponent", ""),
-            "H/A": "H" if p.get("fixture_home") else "A",
+
+    xi_df = pd.DataFrame([
+        {
+            "Pos": p.get("pos"),
+            "Player": p.get("name"),
+            "Team": p.get("team"),
             "Cost": f"£{p.get('cost', 0):.1f}m",
-            "EV": f"{p.get('ev', 0):.2f}",
-        })
-    
-    st.dataframe(pd.DataFrame(xi_data), hide_index=True, use_container_width=True)
-    
-    # Bench
+            "Expected Pts": f"{p.get('ev', 0):.2f}",
+        }
+        for p in result.starting_xi
+    ])
+
+    st.dataframe(xi_df, hide_index=True, use_container_width=True)
+
     st.subheader("Bench")
-    
-    bench_data = []
-    for i, p in enumerate(result.bench, 1):
-        role = "1st Sub" if i == 1 else "Fodder"
-        bench_data.append({
+
+    bench_df = pd.DataFrame([
+        {
             "Order": i,
-            "Role": role,
-            "Pos": p.get("pos", ""),
-            "Player": p.get("name", ""),
+            "Role": "1st Sub" if i == 1 else "Fodder",
+            "Pos": p.get("pos"),
+            "Player": p.get("name"),
             "Cost": f"£{p.get('cost', 0):.1f}m",
-        })
-    
-    st.dataframe(pd.DataFrame(bench_data), hide_index=True, use_container_width=True)
+        }
+        for i, p in enumerate(result.bench, 1)
+    ])
 
+    st.dataframe(bench_df, hide_index=True, use_container_width=True)
 
-# =============================================================================
+# -----------------------------------------------------------------------------
 # Main
-# =============================================================================
+# -----------------------------------------------------------------------------
 
 if page == "Captain":
     render_captain_page(gw)
@@ -283,6 +244,5 @@ elif page == "Transfers":
 elif page == "Free Hit":
     render_free_hit_page(gw)
 
-# Footer
 st.divider()
-st.caption("The Dugout · Decision support, not automation · [Decision Contract](docs/DECISION_CONTRACT_LAYER.md)")
+st.caption("The Dugout · argmax(predicted_points) · GitHub: gisaf22/the-dugout")
