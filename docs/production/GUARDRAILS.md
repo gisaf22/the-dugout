@@ -5,7 +5,7 @@
 ### Current State
 - **Default model**: `two_stage` (p_play × mu_points)
 - **Fallback model**: `legacy` (single GBM)
-- **Model location**: `storage/production/models/lightgbm_v1/`
+- **Model location**: See `config.py:DEFAULT_MODEL_PATH`
 
 ### Model Files
 | File | Description | Status |
@@ -47,7 +47,7 @@ All decision outputs include:
 
 To revert to legacy model:
 ```bash
-cd storage/production/models/lightgbm_v1
+cd storage/production/models/<current_version>
 mv two_stage_model.joblib two_stage_model.joblib.disabled
 ```
 

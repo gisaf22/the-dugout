@@ -8,10 +8,7 @@ Key Classes:
 Usage:
     from dugout.production.pipeline.evaluator import Evaluator
     
-    evaluator = Evaluator(
-        model_dir="models/lightgbm_v1",
-        datasets_dir="storage/datasets"
-    )
+    evaluator = Evaluator()  # Uses default model from config
     metrics = evaluator.evaluate_test()
     metrics.print_summary()
 """
@@ -91,7 +88,7 @@ class Evaluator:
     
     def __init__(
         self,
-        model_dir: str = "models/lightgbm_v1",
+        model_dir: str = "models/lightgbm_v2",
         datasets_dir: str = "storage/datasets",
     ):
         """Initialize evaluator.

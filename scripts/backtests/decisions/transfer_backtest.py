@@ -23,13 +23,13 @@ from typing import List, Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
-import joblib
 import pandas as pd
 
 from dugout.production.data.reader import DataReader
 from dugout.production.features.builder import FeatureBuilder
 from dugout.production.features.definitions import FEATURE_COLUMNS
-from dugout.production.config import DEFAULT_DB_PATH, MODEL_DIR
+from dugout.production.config import DEFAULT_DB_PATH
+from dugout.production.models.predict import predict_points
 
 
 @dataclass
@@ -96,13 +96,6 @@ def run_transfer_backtest(
     if end_gw > max(available_gws):
         raise ValueError(f"end_gw must be <= {max(available_gws)} (latest available)")
     
-    # Load model once
-    model_path = MODEL_DIR / "lightgbm_v1" / "model.joblib"
-    if not model_path.exists():
-        raise FileNotFoundError(f"Model not found at {model_path}")
-    model_data = joblib.load(model_path)
-    model = model_data["gbm"]
-    
     gw_results = []
     
     for target_gw in range(start_gw, end_gw + 1):
@@ -135,9 +128,8 @@ def run_transfer_backtest(
             print(f"  Skipping GW{target_gw}: no eligible players")
             continue
         
-        # Predict expected points
-        X = eligible_df[FEATURE_COLUMNS].fillna(0)
-        eligible_df["predicted_points"] = model.predict(X)
+        # Predict expected points using unified interface
+        eligible_df["predicted_points"] = predict_points(eligible_df)
         
         # Decision: argmax(predicted_points)
         chosen_idx = eligible_df["predicted_points"].idxmax()

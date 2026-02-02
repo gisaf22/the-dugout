@@ -48,7 +48,7 @@ Package name: `dugout`
 
 ## Data & Models
 - Database: `storage/fpl_2025_26.sqlite` (current season); `DUGOUT_DB_PATH` env var overrides
-- Production model: `storage/production/models/lightgbm_v1/model.joblib`
+- Production model: See `config.py:DEFAULT_MODEL_PATH` (version-agnostic)
 - `dugout.production.data.schemas` defines the canonical Pydantic models
 - `DataReader` exposes read-only helpers with cached bulk history
 - Player costs are stored in tenths (`now_cost`); FeatureBuilder converts to millions

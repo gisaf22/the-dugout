@@ -47,9 +47,9 @@ __all__ = [
 class FeatureBuilder:
     """Builds features for FPL point prediction models."""
     
-    # Decay weights for last 5 gameweeks: [GW-1, GW-2, GW-3, GW-4, GW-5]
-    # weight = 0.7^n, normalized to sum to 1.0
-    # Most recent game gets ~42% weight, oldest ~2%
+    # Decay weights for last 5 games: [most_recent, 2nd_recent, 3rd, 4th, oldest]
+    # Heavily recency-biased: last week gets 42%, 5 weeks ago nearly ignored (2%)
+    # Example: if predicting GW24, weights are [GW23, GW22, GW21, GW20, GW19]
     DECAY_WEIGHTS = np.array([0.4169, 0.2918, 0.2043, 0.0715, 0.0155])
     
     def __init__(
@@ -88,13 +88,9 @@ class FeatureBuilder:
         per90_wmean, per90_wvar = self._compute_per90_features(last5)
         rolling = self._compute_minutes_stats(last5)
         stats = self._compute_detailed_stats(last5)
-        minutes_risk = self._compute_minutes_risk_features(last5)
-        tail_risk = self._compute_tail_risk_features(last5)
         
-        # Fixture and player state
-        is_home = self._lookup_is_home(last_row)
+        # Player state
         cost_val = self._normalize_cost(last_row.get('now_cost', 0))
-        status = last_row.get('status', '')
         
         features = {
             # Core features
@@ -104,32 +100,18 @@ class FeatureBuilder:
             'appearances': rolling['appearances'],
             'now_cost': cost_val,
             
-            # Fixture features
-            'is_home_next': 1 if is_home else 0,
-            'is_inactive': 1 if str(status).lower() in {'i', 's', 'u', 'n'} else 0,
-            
             # Activity features
             'games_since_first': len(player_history),
-            'completed_60_count': rolling['completed_60_count'],
-            'minutes_fraction': rolling['minutes_fraction'],
             
             # Detailed stats
             **stats,
-            
-            # Minutes risk features
-            **minutes_risk,
-            
-            # Tail risk / volatility features
-            **tail_risk,
         }
         
         # Interaction features - products that capture combined effects:
-        #   threat_x_mins: Scales threat by playing time (90-min player keeps full value)
-        #   ict_x_home: Measures home performance (ICT when home, 0 when away)
-        #   xg_x_apps: Rewards consistent starters who generate chances
-        features['threat_x_mins'] = features['threat_mean'] * features['mins_mean'] / 90 if features['mins_mean'] > 0 else 0
-        features['ict_x_home'] = features['ict_mean'] * features['is_home_next']
-        features['xg_x_apps'] = features['xg_sum'] * features['appearances']
+        #   ict_per90_x_mins: Scales ICT rate by playing time (nailed starter with high ICT)
+        #   xg_per90_x_apps: Rewards consistent starters with high xG rate
+        features['ict_per90_x_mins'] = features['ict_per90'] * features['mins_mean'] / 90 if features['mins_mean'] > 0 else 0
+        features['xg_per90_x_apps'] = features['xg_per90'] * features['appearances']
         
         return features
     
@@ -165,148 +147,49 @@ class FeatureBuilder:
         Features computed:
             - mins_mean: Average minutes played per game
             - appearances: Count of games with any minutes (> 0)
-            - completed_60_count: Count of games with 60+ minutes (likely starts)
-            - minutes_fraction: Total mins / (90 * games) - playing time share
         """
         if len(last5) == 0:
-            return {'mins_mean': 0, 'appearances': 0, 'completed_60_count': 0, 'minutes_fraction': 0}
+            return {'mins_mean': 0, 'appearances': 0}
         
-        total_possible = 90 * len(last5)
-        return {
-            'mins_mean': last5['minutes'].mean(),
-            'appearances': int((last5['minutes'] > 0).sum()),
-            'completed_60_count': int((last5['minutes'] >= 60).sum()),
-            'minutes_fraction': last5['minutes'].sum() / total_possible if total_possible > 0 else 0,
-        }
-    
-    def _compute_minutes_risk_features(self, last5: pd.DataFrame) -> Dict[str, float]:
-        """Compute minutes risk features from last 5 games.
-        
-        Features computed:
-            - start_rate_5: Proportion of games started (0.0-1.0)
-            - mins_std_5: Standard deviation of minutes (volatility)
-            - mins_below_60_rate_5: Proportion of games with < 60 mins
-        
-        These capture rotation/benching risk patterns. A player with
-        start_rate_5=0.6 and mins_below_60_rate_5=0.4 is a rotation risk.
-        
-        Note: These use the SAME last5 window as other features, which is
-        already lagged (built from games BEFORE the target GW).
-        """
-        if len(last5) == 0:
-            return {
-                'start_rate_5': 0.0,
-                'mins_std_5': 0.0,
-                'mins_below_60_rate_5': 0.0,
-            }
-        
-        n_games = len(last5)
         minutes = last5['minutes']
         
-        # P(mins >= 60): proportion of games with 60+ minutes
-        # This is the empirical estimator for "full match" probability
-        mins_ge_60_rate = (minutes >= 60).sum() / n_games
-        
-        # Minutes volatility
-        mins_std = minutes.std() if n_games > 1 else 0.0
-        
-        # Proportion of low-minute games (< 60 mins = likely sub or benched)
-        mins_below_60_rate = (minutes < 60).sum() / n_games
-        
         return {
-            'start_rate_5': float(mins_ge_60_rate),  # P(mins >= 60)
-            'mins_std_5': float(mins_std) if not pd.isna(mins_std) else 0.0,
-            'mins_below_60_rate_5': float(mins_below_60_rate),
-        }
-    
-    def _compute_tail_risk_features(self, last5: pd.DataFrame) -> Dict[str, float]:
-        """Compute tail risk / upside features from last 5 games.
-        
-        Features computed:
-            - haul_rate_5: Proportion of games with 10+ points (right-tail frequency)
-        
-        A player with haul_rate_5=0.4 hauled in 2 of last 5 GWs. This directly
-        encodes ceiling potential rather than variance (which tree models treat
-        as risk, not opportunity).
-        
-        Note: Uses the SAME last5 window as other features, already lagged.
-        """
-        if len(last5) == 0:
-            return {'haul_rate_5': 0.0}
-        
-        points = last5['total_points']
-        n_games = len(last5)
-        
-        # Haul rate: proportion of games with 10+ points
-        haul_count = (points >= 10).sum()
-        haul_rate = haul_count / n_games
-        
-        return {
-            'haul_rate_5': float(haul_rate),
+            'mins_mean': minutes.mean(),
+            'appearances': int((minutes > 0).sum()),
         }
     
     def _compute_detailed_stats(self, last5: pd.DataFrame) -> Dict[str, float]:
         """Compute detailed performance stats from last 5 games.
         
-        Features computed (sums over last 5):
-            - goals_sum: Total goals scored
-            - assists_sum: Total assists
-            - bonus_sum: Total bonus points
-            - xg_sum: Expected goals (xG)
-            - xa_sum: Expected assists (xA)
-        
-        Features computed (means over last 5):
-            - bps_mean: Average bonus point system score
-            - creativity_mean: Average creativity index
-            - threat_mean: Average threat index
-            - influence_mean: Average influence index
-            - ict_mean: Average ICT index (combined)
+        All features are per90 (normalized by playing time):
+            - goals_per90: Goals per 90 minutes
+            - assists_per90: Assists per 90 minutes
+            - bonus_per90: Bonus points per 90 minutes
+            - bps_per90: BPS per 90 minutes
+            - ict_per90: ICT index per 90 minutes (influence + creativity + threat)
+            - xg_per90: Expected goals per 90 minutes
+            - xa_per90: Expected assists per 90 minutes
         """
-        def safe_sum(col: str) -> float:
-            return last5[col].sum() if col in last5.columns else 0
-        
-        def safe_mean(col: str) -> float:
-            return last5[col].mean() if col in last5.columns else 0
+        # Total minutes for per90 calculations
+        total_mins = last5['minutes'].sum() if 'minutes' in last5.columns else 0
         
         # Handle xG/xA column name variants
-        xg = safe_sum('xG') or safe_sum('expected_goals')
-        xa = safe_sum('xA') or safe_sum('expected_assists')
+        xg_total = self._safe_sum(last5, 'xG') or self._safe_sum(last5, 'expected_goals')
+        xa_total = self._safe_sum(last5, 'xA') or self._safe_sum(last5, 'expected_assists')
+        
+        # Per90 calculation: (total / minutes) * 90
+        def to_per90(total: float) -> float:
+            return (total / total_mins * 90) if total_mins > 0 else 0.0
         
         return {
-            'goals_sum': safe_sum('goals_scored'),
-            'assists_sum': safe_sum('assists'),
-            'bonus_sum': safe_sum('bonus'),
-            'bps_mean': safe_mean('bps'),
-            'creativity_mean': safe_mean('creativity'),
-            'threat_mean': safe_mean('threat'),
-            'influence_mean': safe_mean('influence'),
-            'ict_mean': safe_mean('ict_index'),
-            'xg_sum': xg,
-            'xa_sum': xa,
+            'goals_per90': to_per90(self._safe_sum(last5, 'goals_scored')),
+            'assists_per90': to_per90(self._safe_sum(last5, 'assists')),
+            'bonus_per90': to_per90(self._safe_sum(last5, 'bonus')),
+            'bps_per90': to_per90(self._safe_sum(last5, 'bps')),
+            'ict_per90': to_per90(self._safe_sum(last5, 'ict_index')),
+            'xg_per90': to_per90(xg_total),
+            'xa_per90': to_per90(xa_total),
         }
-    
-    def _lookup_is_home(self, last_row: pd.Series) -> int:
-        """Look up is_home from fixtures table for next GW.
-        
-        Features computed:
-            - is_home_next: 1 if team plays at home next GW, 0 if away
-        
-        Uses DataReader to query fixtures table. Returns 0 if reader unavailable
-        or fixture not found (blank GW).
-        """
-        if self.reader is None:
-            return 0
-        
-        team_id = last_row.get('team_id') or last_row.get('team')
-        last_gw = last_row.get('round') or last_row.get('gw') or last_row.get('GW')
-        
-        if team_id is None or last_gw is None:
-            return 0
-        
-        try:
-            return self.reader.is_home_fixture(int(team_id), int(last_gw) + 1)
-        except (KeyError, TypeError):
-            return 0
     
     def _normalize_cost(self, now_cost: Any) -> float:
         """Convert cost from tenths to millions if needed.
@@ -392,44 +275,25 @@ class FeatureBuilder:
             "mins_mean": self._safe_float(row.get("mins_mean", 0)),
             "appearances": self._safe_float(row.get("appearances", 0)),
             "now_cost": self._safe_float(row.get("now_cost", 0)),
-            "total_points_season": self._safe_float(row.get("total_points_season", 0)),
-            "is_home_next": 1 if row.get("is_home_next") else 0,
-            "is_inactive": 1 if row.get("status", "").lower() in {"i", "s", "u", "n"} else 0,
-            "completed_60_count": self._safe_float(row.get("completed_60_count", 0)),
-            "minutes_fraction": self._safe_float(row.get("minutes_fraction", 0)),
+            "games_since_first": self._safe_float(row.get("games_since_first", 10)),
         }
         
-        # Extended features (rolling stats from last5)
+        # Extended features (all per90 from last5)
         extended_cols = [
-            "goals_sum", "assists_sum", "bonus_sum", "bps_mean",
-            "creativity_mean", "threat_mean", "influence_mean", "ict_mean",
-            "xg_sum", "xa_sum",
+            "goals_per90", "assists_per90", "bonus_per90", "bps_per90",
+            "ict_per90", "xg_per90", "xa_per90",
         ]
         for col in extended_cols:
             features[col] = self._safe_float(row.get(col, 0))
         
-        # Minutes risk features
-        features["start_rate_5"] = self._safe_float(row.get("start_rate_5", 1.0))
-        features["mins_std_5"] = self._safe_float(row.get("mins_std_5", 0.0))
-        features["mins_below_60_rate_5"] = self._safe_float(row.get("mins_below_60_rate_5", 0.0))
-        
-        # Tail risk / upside features
-        features["haul_rate_5"] = self._safe_float(row.get("haul_rate_5", 0.0))
-        
-        # Games since first appearance
-        features["games_since_first"] = self._safe_float(row.get("games_since_first", 10))
-        
         # Interaction features
-        threat_mean = features.get("threat_mean", 0)
+        ict_per90 = features.get("ict_per90", 0)
         mins_mean = features["mins_mean"]
-        ict_mean = features["ict_mean"]
-        xg_sum = features["xg_sum"]
+        xg_per90 = features["xg_per90"]
         apps = features["appearances"]
-        is_home = features["is_home_next"]
         
-        features["threat_x_mins"] = threat_mean * mins_mean / 90.0 if mins_mean > 0 else 0
-        features["ict_x_home"] = ict_mean * is_home
-        features["xg_x_apps"] = xg_sum * apps if apps > 0 else 0
+        features["ict_per90_x_mins"] = ict_per90 * mins_mean / 90.0 if mins_mean > 0 else 0
+        features["xg_per90_x_apps"] = xg_per90 * apps
         
         return features
     
@@ -459,22 +323,73 @@ class FeatureBuilder:
             
             for i in range(min_history, len(pdf)):
                 target = pdf.iloc[i]
+                features = self.build_for_player(pdf.iloc[:i])
+                # is_home_next comes from target GW (the one we're predicting)
+                features['is_home_next'] = int(target.get('is_home', 0))
                 rows.append({
                     **target[["player_id", "player_name", "team_name", "team_id", "position", "gw", "total_points", "minutes"]],
-                    **self.build_for_player(pdf.iloc[:i]),
+                    **features,
                 })
+        
+        return pd.DataFrame(rows)
+    
+    def build_for_prediction(
+        self,
+        raw_df: pd.DataFrame,
+        fixture_map: Dict[int, bool],
+        min_history: int = 5,
+    ) -> pd.DataFrame:
+        """Build features for live prediction (no target row).
+        
+        Unlike build_training_set, this builds features from the latest
+        available data and uses fixture_map for is_home_next.
+        
+        Args:
+            raw_df: Raw gameweek data (all history).
+            fixture_map: Dict mapping team_id -> is_home (True/False) for target GW.
+            min_history: Minimum GWs of history required.
+                
+        Returns:
+            DataFrame with one row per player, ready for prediction.
+        """
+        rows = []
+        
+        if raw_df.empty:
+            return pd.DataFrame(rows)
+        
+        for _, pdf in raw_df.groupby("player_id"):
+            pdf = pdf.sort_values("gw").reset_index(drop=True)
+            
+            if len(pdf) < min_history:
+                continue
+            
+            last_row = pdf.iloc[-1]
+            features = self.build_for_player(pdf)
+            # is_home_next from fixture_map (target GW fixtures)
+            team_id = last_row.get('team_id', 0)
+            features['is_home_next'] = int(fixture_map.get(team_id, False))
+            
+            rows.append({
+                **last_row[["player_id", "player_name", "team_name", "team_id", "position", "gw", "total_points", "minutes"]],
+                **features,
+            })
         
         return pd.DataFrame(rows)
     
     @staticmethod
     def _safe_float(value: Any, default: float = 0.0) -> float:
-        """Safely convert a value to float."""
-        if value is None or value == "":
-            return default
+        """Safely convert a value to float, returning default if invalid."""
         try:
-            result = float(value)
-            if np.isnan(result):
-                return default
-            return result
+            return float(value) if value is not None and value != "" else default
         except (ValueError, TypeError):
             return default
+    
+    @staticmethod
+    def _safe_sum(df: pd.DataFrame, col: str) -> float:
+        """Safely sum a column, returning 0 if column doesn't exist."""
+        return df[col].sum() if col in df.columns else 0.0
+    
+    @staticmethod
+    def _safe_mean(df: pd.DataFrame, col: str) -> float:
+        """Safely compute mean of a column, returning 0 if column doesn't exist."""
+        return df[col].mean() if col in df.columns else 0.0

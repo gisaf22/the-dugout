@@ -50,7 +50,7 @@ class Pipeline:
     """End-to-end FPL ML pipeline."""
     
     DATASETS_DIR = STORAGE_DIR / "datasets"
-    MODEL_PATH = MODEL_DIR / "lightgbm_v1"
+    MODEL_PATH = MODEL_DIR / "lightgbm_v2"
     
     def __init__(self, two_stage: bool = False, conditional_on_play: bool = False):
         """Initialize pipeline.

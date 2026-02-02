@@ -27,8 +27,8 @@ Three decisions. One rule: `argmax(predicted_points)`
 │                                                                              │
 │  ┌────────────────┐   ┌─────────────────┐   ┌────────────────────┐          │
 │  │ fpl_2025_26.db │   │ predicted_pts   │   │ Captain            │          │
-│  │ DataReader     │   │ p_start         │   │ Transfer-In        │          │
-│  │ Pydantic       │   │ ev              │   │ Free Hit           │          │
+│  │ DataReader     │   │ p_play          │   │ Transfer-In        │          │
+│  │ Pydantic       │   │ mu_points       │   │ Free Hit           │          │
 │  │ schemas        │   │                 │   │                    │          │
 │  └────────────────┘   └─────────────────┘   └────────────────────┘          │
 │                                                                              │
@@ -75,26 +75,28 @@ DataReader.get_next_gameweek()            # Upcoming GW number
 
 ## Layer 2: ML Signal Generation
 
-### Two-Step Prediction Model
+### Two-Stage Prediction Model
 ```
-Step 1: P(start)     - Probability player starts (minutes classifier)
-Step 2: E[pts|start] - Expected points if starting (LightGBM regressor)
+Stage 1: p_play    — P(minutes > 0)      — LightGBM classifier on all rows
+Stage 2: mu_points — E[points | plays]   — LightGBM regressor on rows with minutes > 0
 
-Final:  E[pts] = P(start) × E[pts|start] + (1 - P(start)) × 1.0
+Final:  predicted_points = p_play × mu_points
 ```
+
+This separates "did not play" from "played badly" — the research-validated approach.
 
 ### Signal Definitions
 
 | Signal | Source | Description |
 |--------|--------|-------------|
-| `predicted_points` | LightGBM | Raw regressor output |
-| `p_start` | Classifier | Probability of starting (0-1) |
-| `ev` | Derived | Expected value: p_start × predicted_points |
+| `predicted_points` | Two-stage model | p_play × mu_points |
+| `p_play` | Classifier | Probability of playing (minutes > 0) |
+| `mu_points` | Regressor | Expected points conditional on playing |
 
 ### Feature Engineering (`src/dugout/production/features/`)
-- Decay-weighted per90 calculations (recent form matters more)
-- Rolling statistics (mean, median, variance)
-- Opponent strength adjustments
+- Rolling statistics over last 5 games (mean, sum, variance)
+- Recent form indicators (appearances, minutes fraction)
+- Fixture context (home/away)
 
 ---
 
@@ -202,27 +204,25 @@ the-dugout/
 ```
 User asks: "Who should I captain?"
 
-1. DataReader loads player pool + recent history
-2. Pipeline runs prediction for all players
-3. For each player:
-   - predicted_points from LightGBM
-   - p_start from classifier
-   - ev = p_start × predicted_points + (1-p_start) × 1.0
-4. CaptainPicker filters to user's squad
-5. Returns recommendation: argmax(predicted_points)
-6. User decides based on their risk tolerance
+1. DataReader loads player history (last 5 GWs)
+2. FeatureBuilder computes rolling stats
+3. Two-stage model predicts:
+   - p_play = P(minutes > 0)
+   - mu_points = E[points | plays]
+   - predicted_points = p_play × mu_points
+4. Decision: argmax(predicted_points)
 ```
 
 ---
 
 ## Key Design Decisions
 
-### Why Two-Step Prediction?
+### Why Two-Stage Prediction?
 Minutes and points are fundamentally different:
-- Minutes: Rotation, fitness, manager preference (classification problem)
-- Points: Goals, assists, bonus (regression problem)
+- Participation: Rotation, fitness, manager preference (classification)
+- Performance: Goals, assists, bonus (regression)
 
-Combining them avoids the "Guardiola problem" where a benched player gets high expected points.
+Separating them avoids the "Guardiola problem" where a benched player gets high expected points.
 
 ---
 
