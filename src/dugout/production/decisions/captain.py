@@ -127,7 +127,8 @@ def get_captain_candidates(
     
     # Predict using unified interface (supports two-stage and legacy)
     # GUARDRAIL: This is the ONLY place predictions are made
-    latest_df["predicted_points"] = predict_points(latest_df)
+    # Uses base model (no cost) - Captain is pure ranking, cost irrelevant
+    latest_df["predicted_points"] = predict_points(latest_df, model_variant="base")
     model_type = get_last_model_type()
     
     # Add display columns (opponent, is_home for output only)

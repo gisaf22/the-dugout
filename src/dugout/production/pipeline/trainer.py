@@ -7,6 +7,10 @@ Supports two training modes:
     1. Single model (legacy): Train one regressor on all data
     2. Two-stage (epistemically aligned): Separate participation/performance
 
+Two model variants:
+    - Base model: For Captain/Transfer (no cost - pure ranking)
+    - Free Hit model: For Free Hit optimization (includes cost)
+
 Key Classes:
     Trainer - Canonical trainer for all production models
 
@@ -14,8 +18,8 @@ Usage:
     from dugout.production import Trainer
     
     trainer = Trainer()
-    gbm = trainer.train(train_df)
-    two_stage = trainer.train_two_stage(train_df)
+    base_model = trainer.train_two_stage(train_df)  # no cost
+    fh_model = trainer.train_two_stage(train_df, include_cost=True)  # with cost
 """
 
 from __future__ import annotations
@@ -25,7 +29,7 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 
-from dugout.production.features.definitions import FEATURE_COLUMNS
+from dugout.production.features.definitions import BASE_FEATURES, FREE_HIT_FEATURES, FEATURE_COLUMNS
 from dugout.production.models.two_stage import TwoStageModels
 
 
@@ -125,7 +129,11 @@ class Trainer:
         rf.fit(X, residuals)
         return rf
     
-    def train_two_stage(self, train_df: pd.DataFrame) -> TwoStageModels:
+    def train_two_stage(
+        self, 
+        train_df: pd.DataFrame, 
+        include_cost: bool = False
+    ) -> TwoStageModels:
         """Train epistemically-aligned two-stage models.
         
         Research-validated approach:
@@ -135,21 +143,26 @@ class Trainer:
         Final prediction: p_play × mu_points
         
         Args:
-            train_df: Training DataFrame with FEATURE_COLUMNS, 'minutes', 'total_points'
+            train_df: Training DataFrame with features, 'minutes', 'total_points'
+            include_cost: If True, include now_cost (for Free Hit model)
             
         Returns:
             TwoStageModels container
         """
+        # Select feature set based on model variant
+        feature_cols = FREE_HIT_FEATURES if include_cost else BASE_FEATURES
+        model_name = "Free Hit" if include_cost else "Base"
+        
         # Validate required columns
-        required = ["minutes", "total_points"] + FEATURE_COLUMNS
+        required = ["minutes", "total_points"] + feature_cols
         missing = [c for c in required if c not in train_df.columns]
         if missing:
             raise ValueError(f"Missing required columns: {missing}")
         
-        X_all = train_df[FEATURE_COLUMNS].values
+        X_all = train_df[feature_cols].values
         
         # 1. Train p_play: P(minutes > 0) on ALL rows
-        print("Training p_play (P(minutes > 0))...")
+        print(f"Training p_play ({model_name} model)...")
         y_play = (train_df["minutes"] > 0).astype(int).values
         lgb_train_play = lgb.Dataset(X_all, label=y_play)
         
@@ -163,11 +176,11 @@ class Trainer:
         print(f"  → Trained on {len(y_play):,} rows, play_rate={play_rate:.2%}")
         
         # 2. Train mu_points: E[points | plays] on rows where minutes > 0
-        print("Training mu_points (E[points | plays])...")
+        print(f"Training mu_points ({model_name} model)...")
         play_mask = train_df["minutes"] > 0
         train_played = train_df[play_mask]
         
-        X_played = train_played[FEATURE_COLUMNS].values
+        X_played = train_played[feature_cols].values
         y_points = train_played["total_points"].values
         lgb_train_points = lgb.Dataset(X_played, label=y_points)
         
@@ -182,7 +195,7 @@ class Trainer:
         return TwoStageModels(
             p_play=p_play,
             mu_points=mu_points,
-            feature_cols=FEATURE_COLUMNS.copy(),
+            feature_cols=feature_cols.copy(),
         )
 
 

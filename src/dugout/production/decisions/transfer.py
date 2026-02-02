@@ -136,7 +136,8 @@ def get_transfer_recommendations(
     
     # Predict using unified interface (supports two-stage and legacy)
     # GUARDRAIL: This is the ONLY place predictions are made
-    latest_df["predicted_points"] = predict_points(latest_df)
+    # Uses base model (no cost) - Transfer ranks by pure expected points
+    latest_df["predicted_points"] = predict_points(latest_df, model_variant="base")
     model_type = get_last_model_type()
     
     # Contract assertion - verify no forbidden signals leaked in

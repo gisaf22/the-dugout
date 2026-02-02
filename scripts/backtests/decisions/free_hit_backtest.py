@@ -149,7 +149,8 @@ def run_free_hit_backtest(
             continue
         
         # Predict expected points using unified interface
-        eligible_df["predicted_points"] = predict_points(eligible_df)
+        # Uses free_hit model (with cost) for budget-constrained optimization
+        eligible_df["predicted_points"] = predict_points(eligible_df, model_variant="free_hit")
         
         # Get actual points for target_gw
         actual_df = raw_df[raw_df["gw"] == target_gw][

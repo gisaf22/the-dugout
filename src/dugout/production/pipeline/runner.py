@@ -37,7 +37,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 from dugout.production.config import DEFAULT_DB_PATH, MODEL_DIR, STORAGE_DIR
 from dugout.production.data import DataReader
 from dugout.production.features import FeatureBuilder
-from dugout.production.features.definitions import FEATURE_COLUMNS
+from dugout.production.features.definitions import FEATURE_COLUMNS, BASE_FEATURES, FREE_HIT_FEATURES
 from dugout.production.models import DatasetBuilder
 from dugout.production.models.two_stage import (
     TwoStageModels, 
@@ -128,8 +128,12 @@ class Pipeline:
     def train(self) -> None:
         """Step 4: Train model(s) and save artifacts.
         
-        If two_stage=True: Trains p_play and mu_points separately.
+        If two_stage=True: Trains both base and free_hit models.
         Otherwise: Trains single LightGBM regressor.
+        
+        Two model variants:
+            - Base model (no cost): For Captain and Transfer decisions
+            - Free Hit model (with cost): For Free Hit optimization
         """
         if self.train_df is None:
             raise ValueError("Call split() first")
@@ -140,13 +144,28 @@ class Pipeline:
             # Epistemically-aligned two-stage training
             # Research-validated: separates participation from performance
             print("\n🎯 TWO-STAGE TRAINING (Epistemically Aligned)")
-            self.model = trainer.train_two_stage(self.train_df)
             
-            # Save two-stage models
+            # Train BASE model (no cost) for Captain/Transfer
+            print("\n--- BASE MODEL (Captain/Transfer) ---")
+            self.model = trainer.train_two_stage(self.train_df, include_cost=False)
+            
+            # Save base model
             self.MODEL_PATH.mkdir(parents=True, exist_ok=True)
             save_two_stage_models(self.model, self.MODEL_PATH)
+            print(f"Base model saved to {self.MODEL_PATH}")
             
-            print(f"Two-stage model saved to {self.MODEL_PATH}")
+            # Train FREE HIT model (with cost) for Free Hit
+            print("\n--- FREE HIT MODEL (with cost) ---")
+            self.free_hit_model = trainer.train_two_stage(self.train_df, include_cost=True)
+            
+            # Save free hit model
+            free_hit_path = self.MODEL_PATH / "free_hit_model.joblib"
+            joblib.dump({
+                "p_play": self.free_hit_model.p_play,
+                "mu_points": self.free_hit_model.mu_points,
+                "feature_cols": self.free_hit_model.feature_cols,
+            }, free_hit_path)
+            print(f"Free Hit model saved to {free_hit_path}")
         else:
             # Legacy single-model training
             # Apply conditional training filter if enabled

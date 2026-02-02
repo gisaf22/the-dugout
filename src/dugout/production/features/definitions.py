@@ -1,7 +1,14 @@
 """Feature column definitions and configuration.
 
-Defines the feature columns expected by the trained LightGBM model.
-These columns must be present in any prediction input.
+Defines the feature columns expected by the trained LightGBM models.
+
+Two model variants:
+- BASE_FEATURES: For Captain and Transfer decisions (no cost - pure ranking)
+- FREE_HIT_FEATURES: For Free Hit optimization (includes cost - budget ceiling problem)
+
+"Cost is excluded from ranking decisions but included in Free Hit optimization 
+because Free Hit is a budget-constrained selection problem where price proxies 
+player ceiling."
 """
 
 from __future__ import annotations
@@ -10,15 +17,15 @@ from dataclasses import dataclass, field
 from typing import List
 
 
-FEATURE_COLUMNS = [
+# Base features for ranking decisions (Captain, Transfer)
+# Cost excluded to avoid circular reasoning and find inefficiencies
+BASE_FEATURES = [
     # Weighted performance (decay-weighted over last 5)
     "per90_wmean",
     "per90_wvar",
     # Activity (last 5)
     "mins_mean",
     "appearances",
-    # Current state
-    "now_cost",
     # Fixture
     "is_home_next",
     # Temporal
@@ -34,11 +41,19 @@ FEATURE_COLUMNS = [
     # Interactions
     "ict_per90_x_mins",
     "xg_per90_x_apps",
+    "apps_x_goals",
 ]
+
+# Free Hit features (includes cost for budget-constrained optimization)
+# Cost included because Free Hit maximizes ceiling under budget constraint
+FREE_HIT_FEATURES = BASE_FEATURES + ["now_cost"]
+
+# Default for backwards compatibility
+FEATURE_COLUMNS = BASE_FEATURES
 
 
 @dataclass
 class FeatureConfig:
     """Configuration for feature engineering."""
     
-    feature_cols: List[str] = field(default_factory=lambda: FEATURE_COLUMNS.copy())
+    feature_cols: List[str] = field(default_factory=lambda: BASE_FEATURES.copy())

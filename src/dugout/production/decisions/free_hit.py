@@ -135,9 +135,10 @@ def optimize_free_hit(
     unavailable = ["n", "i", "s", "u"]
     latest_df = latest_df[~latest_df["status"].isin(unavailable)].copy()
     
-    # Predict using unified interface (supports two-stage and legacy)
+    # Predict using unified interface (free_hit variant includes cost)
     # GUARDRAIL: This is the ONLY place predictions are made
-    latest_df["predicted_points"] = predict_points(latest_df)
+    # Free Hit uses the free_hit model which includes now_cost
+    latest_df["predicted_points"] = predict_points(latest_df, model_variant="free_hit")
     model_type = get_last_model_type()
     
     # Contract assertion - verify no forbidden signals leaked in

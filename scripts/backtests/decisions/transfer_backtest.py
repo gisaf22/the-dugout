@@ -136,7 +136,8 @@ def run_transfer_backtest(
             continue
         
         # Predict expected points using unified interface
-        eligible_df["predicted_points"] = predict_points(eligible_df)
+        # Uses base model (no cost) for pure ranking
+        eligible_df["predicted_points"] = predict_points(eligible_df, model_variant="base")
         
         # Decision: argmax(predicted_points)
         chosen_idx = eligible_df["predicted_points"].idxmax()

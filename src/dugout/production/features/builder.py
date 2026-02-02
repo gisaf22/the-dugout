@@ -110,8 +110,10 @@ class FeatureBuilder:
         # Interaction features - products that capture combined effects:
         #   ict_per90_x_mins: Scales ICT rate by playing time (nailed starter with high ICT)
         #   xg_per90_x_apps: Rewards consistent starters with high xG rate
+        #   apps_x_goals: Consistent starters with goal threat
         features['ict_per90_x_mins'] = features['ict_per90'] * features['mins_mean'] / 90 if features['mins_mean'] > 0 else 0
         features['xg_per90_x_apps'] = features['xg_per90'] * features['appearances']
+        features['apps_x_goals'] = features['appearances'] * features['goals_per90']
         
         return features
     
@@ -291,9 +293,11 @@ class FeatureBuilder:
         mins_mean = features["mins_mean"]
         xg_per90 = features["xg_per90"]
         apps = features["appearances"]
+        goals_per90 = features.get("goals_per90", 0)
         
         features["ict_per90_x_mins"] = ict_per90 * mins_mean / 90.0 if mins_mean > 0 else 0
         features["xg_per90_x_apps"] = xg_per90 * apps
+        features["apps_x_goals"] = apps * goals_per90
         
         return features
     
