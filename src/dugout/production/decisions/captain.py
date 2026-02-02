@@ -88,10 +88,24 @@ def get_captain_candidates(
     # Filter to data up to history_gw
     raw_df = raw_df[raw_df["gw"] <= history_gw].copy()
     
-    # Build features
+    # Get FUTURE fixtures (target GW) for is_home_next feature
+    fixtures = reader.get_fixtures(gw=target_gw)
+    teams = reader.get_teams()
+    team_short = {t["id"]: t["short_name"] for t in teams}
+    
+    # Build fixture maps
+    fixture_map = {}      # team_id -> is_home (for FeatureBuilder)
+    display_map = {}      # team_id -> {opponent_short, is_home} (for display)
+    for f in fixtures:
+        h, a = f["team_h"], f["team_a"]
+        fixture_map[h] = True
+        fixture_map[a] = False
+        display_map[h] = {"opponent_short": team_short.get(a, "?"), "is_home": True}
+        display_map[a] = {"opponent_short": team_short.get(h, "?"), "is_home": False}
+    
+    # Build features with correct is_home_next from target GW fixtures
     fb = FeatureBuilder()
-    features_df = fb.build_training_set(raw_df)
-    latest_df = features_df[features_df["gw"] == history_gw].copy()
+    latest_df = fb.build_for_prediction(raw_df, fixture_map)
     
     # Runtime assertion: no fixture signals in features
     fixture_present = FORBIDDEN_FIXTURE_SIGNALS.intersection(latest_df.columns)
@@ -116,8 +130,13 @@ def get_captain_candidates(
     latest_df["predicted_points"] = predict_points(latest_df)
     model_type = get_last_model_type()
     
-    # Add fixture display info (DISPLAY ONLY - not used in ranking)
-    latest_df = reader.enrich_with_fixture_display(latest_df, gw=target_gw, team_col="team_id")
+    # Add display columns (opponent, is_home for output only)
+    latest_df["opponent_short"] = latest_df["team_id"].map(
+        lambda x: display_map.get(x, {}).get("opponent_short", "?")
+    )
+    latest_df["is_home"] = latest_df["team_id"].map(
+        lambda x: display_map.get(x, {}).get("is_home", False)
+    )
     
     # Get top candidates
     candidates = latest_df.nlargest(top_n, "predicted_points")[

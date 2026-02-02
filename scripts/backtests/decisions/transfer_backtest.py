@@ -110,9 +110,16 @@ def run_transfer_backtest(
         
         # Build features using only history up to GW-1
         history_df = raw_df[raw_df["gw"] <= history_gw].copy()
+        
+        # Get target GW fixtures for is_home_next
+        fixtures = reader.get_fixtures(gw=target_gw)
+        fixture_map = {}
+        for f in fixtures:
+            fixture_map[f["team_h"]] = True
+            fixture_map[f["team_a"]] = False
+        
         fb = FeatureBuilder()
-        features_df = fb.build_training_set(history_df)
-        latest_df = features_df[features_df["gw"] == history_gw].copy()
+        latest_df = fb.build_for_prediction(history_df, fixture_map)
         
         # Merge status from history_gw
         player_status = history_df[history_df["gw"] == history_gw][
