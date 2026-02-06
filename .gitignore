@@ -26,8 +26,8 @@ htmlcov/
 # Storage (generated data - see README for how to populate)
 storage/
 
-# Models (trained artifacts)
-models/
+# Model artifacts (trained .joblib files, not source code)
+*.joblib
 
 # Jupyter
 .ipynb_checkpoints/
