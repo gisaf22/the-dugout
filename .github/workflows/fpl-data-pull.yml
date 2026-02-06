@@ -33,11 +33,12 @@ jobs:
       
       - name: Install dependencies
         run: |
-          pip install requests
+          pip install -r requirements.txt
       
       - name: Pull FPL data
         env:
-          DUGOUT_DB_PATH: data/fpl_2025_26.sqlite
+          PYTHONPATH: src
+          DUGOUT_DB_PATH: storage/fpl_2025_26.sqlite
         run: |
           ARGS=""
           if [ -n "${{ github.event.inputs.gameweek }}" ]; then
@@ -46,12 +47,12 @@ jobs:
           if [ "${{ github.event.inputs.force }}" == "true" ]; then
             ARGS="$ARGS --force"
           fi
-          python scripts/pull_fpl_data.py $ARGS
+          python scripts/ops/pull_fpl_data.py $ARGS
       
       - name: Commit updated database
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add data/fpl_current_season.sqlite
+          git add storage/fpl_2025_26.sqlite
           git diff --staged --quiet || git commit -m "🔄 Auto-update FPL data $(date +'%Y-%m-%d %H:%M')"
           git push
