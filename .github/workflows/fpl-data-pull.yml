@@ -38,7 +38,7 @@ jobs:
       - name: Pull FPL data
         env:
           PYTHONPATH: src
-          DUGOUT_DB_PATH: storage/fpl_2025_26.sqlite
+          DUGOUT_DB_PATH: fpl_2025_26.sqlite
         run: |
           ARGS=""
           if [ -n "${{ github.event.inputs.gameweek }}" ]; then
@@ -49,10 +49,7 @@ jobs:
           fi
           python scripts/ops/pull_fpl_data.py $ARGS
       
-      - name: Commit updated database
+      - name: Verify data pull
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add storage/fpl_2025_26.sqlite
-          git diff --staged --quiet || git commit -m "🔄 Auto-update FPL data $(date +'%Y-%m-%d %H:%M')"
-          git push
+          echo "✅ FPL data pull completed successfully"
+          ls -la fpl_2025_26.sqlite
