@@ -193,7 +193,7 @@ The following production behaviors are explicitly validated by the research pipe
 
 These defaults are not arbitrary. Each was tested against alternatives:
 
-- **Availability-weighted EV** (`p_play × mu_points`) was explicitly rejected for single-GW decisions
+- **Availability-weighted EV** (two-stage `p_play × mu_points`) was explicitly rejected for single-GW decisions
 - **Fixture context adjustment** showed no predictive signal
 - **p60 threshold filtering** reduced candidate pool without reducing regret
 
@@ -206,7 +206,7 @@ Future contributors should not reintroduce these heuristics without re-running t
 - **Research beliefs are frozen artifacts, not live dependencies.** They exist to validate decisions, not to power the app.
 - **Production prioritizes simplicity and deployability.** A single `predicted_points` column is easier to maintain than a multi-model belief stack.
 - **The decision rule is what matters.** Research proved that `argmax(expected_points)` minimizes regret — production implements this rule, regardless of how `expected_points` is computed.
-- **Conditional modeling adds complexity without app-level benefit.** Separating `p_play` and `mu_points` improves regret analysis but doesn't change the captain selection outcome.
+- **Decision-specific models provide tailored features.** Each decision (Captain, Transfer, FreeHit) uses its own model optimized for that context.
 - **Avoiding tight coupling preserves iteration speed.** Production can retrain its model without re-running the full research pipeline.
 
 If a future version needs research-grade predictions in production, the path is:

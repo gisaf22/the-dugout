@@ -4,12 +4,12 @@ Orchestrates the complete training workflow:
 1. Gather data from database
 2. Build features
 3. Split into train/val/test
-4. Train models
+4. Train decision-specific models (captain, transfer, free_hit)
 5. Evaluate on all datasets
 6. Save results
 
 Usage:
-    python scripts/ops/train_and_eval.py --two-stage
+    python scripts/ops/train_and_eval.py
 """
 
 import argparse
@@ -22,13 +22,7 @@ from dugout.production.features.definitions import FEATURE_COLUMNS
 def main():
     """Run full training + evaluation pipeline."""
     parser = argparse.ArgumentParser(
-        description="Train and evaluate FPL prediction model"
-    )
-    parser.add_argument(
-        "--two-stage",
-        action="store_true",
-        default=True,
-        help="Use two-stage model (p_play × mu_points). Default: True",
+        description="Train and evaluate FPL prediction models"
     )
     parser.add_argument(
         "--test-gws",
@@ -55,7 +49,7 @@ def main():
     print("=" * 70)
     
     # Initialize pipeline
-    pipeline = Pipeline(two_stage=args.two_stage)
+    pipeline = Pipeline()
     
     # Step 1: Gather data
     print("\n[1/5] GATHERING DATA")

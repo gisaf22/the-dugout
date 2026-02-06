@@ -7,8 +7,8 @@ CONTRACT ENFORCEMENT:
     - Any modification requires updating DECISION_CONTRACT_LAYER.md
     - Any modification requires re-running research pipeline
     
-GUARDRAIL: Must use predict_points() from dugout.production.models.predict.
-           Direct model loading is FORBIDDEN.
+GUARDRAIL: Uses FreeHitModel via registry (baseline + cost features).
+           See docs/research/decision_specific_modeling.md for ablation results.
 """
 
 import pandas as pd
@@ -19,7 +19,7 @@ from dugout.production.features.builder import FeatureBuilder
 from dugout.production.features.definitions import FEATURE_COLUMNS
 from dugout.production.config import MODEL_DIR
 from dugout.production.models.squad import FreeHitOptimizer
-from dugout.production.models.predict import predict_points, get_last_model_type
+from dugout.production.models.registry import get_model
 
 # Signals that are FORBIDDEN in free hit decision (research-rejected)
 FORBIDDEN_SIGNALS = {"p_play", "p60", "weighted_ev", "availability_weight"}
@@ -135,11 +135,18 @@ def optimize_free_hit(
     unavailable = ["n", "i", "s", "u"]
     latest_df = latest_df[~latest_df["status"].isin(unavailable)].copy()
     
-    # Predict using unified interface (free_hit variant includes cost)
-    # GUARDRAIL: This is the ONLY place predictions are made
-    # Free Hit uses the free_hit model which includes now_cost
-    latest_df["predicted_points"] = predict_points(latest_df, model_variant="free_hit")
-    model_type = get_last_model_type()
+    # Predict using FreeHitModel (baseline + cost features)
+    # GUARDRAIL: This is the ONLY place predictions are made for free hit
+    # See docs/research/decision_specific_modeling.md for ablation results
+    try:
+        free_hit_model = get_model("free_hit")
+        latest_df["predicted_points"] = free_hit_model.predict(latest_df)
+        model_type = "free_hit_model"
+    except FileNotFoundError:
+        # Fallback to legacy predict_points if free_hit_model.joblib not trained yet
+        from dugout.production.models.predict import predict_points, get_last_model_type
+        latest_df["predicted_points"] = predict_points(latest_df, model_variant="free_hit")
+        model_type = get_last_model_type()
     
     # Contract assertion - verify no forbidden signals leaked in
     forbidden_present = FORBIDDEN_SIGNALS.intersection(latest_df.columns)

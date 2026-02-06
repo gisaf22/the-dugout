@@ -34,10 +34,14 @@ Package name: `dugout`
 ### Features (`src/dugout/production/features/`)
 - `builder.py` - Feature engineering for predictions
 - `definitions.py` - Feature column definitions
+- `views.py` - Decision-scoped feature lists (CAPTAIN_FEATURES, TRANSFER_FEATURES, FREE_HIT_FEATURES)
 - `team_form.py` - Dynamic team form calculations
 
 ### Models (`src/dugout/production/models/`)
-- `captain.py` - Captain selection (argmax expected points)
+- `registry.py` - Model lookup by decision (`get_model("captain")`)
+- `captain_model.py` - Position-conditional model (18 features)
+- `transfer_model.py` - Baseline model (16 features)
+- `free_hit_model.py` - Cost-aware model (17 features)
 - `squad.py` - Free Hit optimizer with PuLP linear programming
 - `backtest.py` - Walk-forward validation
 - `baseline.py` - Rolling average baseline model
@@ -48,16 +52,20 @@ Package name: `dugout`
 
 ## Data & Models
 - Database: `storage/fpl_2025_26.sqlite` (current season); `DUGOUT_DB_PATH` env var overrides
-- Production model: See `config.py:DEFAULT_MODEL_PATH` (version-agnostic)
+- Decision-specific models in `storage/production/models/lightgbm_v2/`:
+  - `captain_model.joblib` - 18 features, position-conditional
+  - `transfer_model.joblib` - 16 features, baseline
+  - `free_hit_model.joblib` - 17 features, includes cost
 - `dugout.production.data.schemas` defines the canonical Pydantic models
 - `DataReader` exposes read-only helpers with cached bulk history
 - Player costs are stored in tenths (`now_cost`); FeatureBuilder converts to millions
 
 ## Decision Modules (`src/dugout/production/decisions/`)
 Core logic implementing frozen rule: `argmax(predicted_points)`
-- `captain.py` - `pick_captain()` function
-- `transfer.py` - `recommend_transfers()` function
-- `free_hit.py` - `optimize_free_hit()` function
+Each decision loads its own model via registry (no shared prediction paths).
+- `captain.py` - `pick_captain()` → CaptainModel
+- `transfer.py` - `get_transfer_recommendations()` → TransferModel
+- `free_hit.py` - `optimize_free_hit()` → FreeHitModel
 
 ## CLI Scripts (`scripts/`)
 

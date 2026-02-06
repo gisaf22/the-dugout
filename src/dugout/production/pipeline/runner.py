@@ -39,10 +39,6 @@ from dugout.production.data import DataReader
 from dugout.production.features import FeatureBuilder
 from dugout.production.features.definitions import FEATURE_COLUMNS, BASE_FEATURES, FREE_HIT_FEATURES
 from dugout.production.models import DatasetBuilder
-from dugout.production.models.two_stage import (
-    TwoStageModels, 
-    save_two_stage_models, load_two_stage_models
-)
 from dugout.production.pipeline.trainer import Trainer
 
 
@@ -52,19 +48,9 @@ class Pipeline:
     DATASETS_DIR = STORAGE_DIR / "datasets"
     MODEL_PATH = MODEL_DIR / "lightgbm_v2"
     
-    def __init__(self, two_stage: bool = False, conditional_on_play: bool = False):
-        """Initialize pipeline.
-        
-        Args:
-            two_stage: If True, use epistemically-aligned two-stage modeling:
-                p_play × mu_points. Research-validated approach that separates
-                participation from performance. Default False for backward compatibility.
-            conditional_on_play: (Legacy) If True, train only on rows where player appeared
-                (minutes > 0). Ignored if two_stage=True.
-        """
+    def __init__(self):
+        """Initialize pipeline."""
         self.db_path = DEFAULT_DB_PATH
-        self.two_stage = two_stage
-        self.conditional_on_play = conditional_on_play
         
         # State
         self.raw_df: Optional[pd.DataFrame] = None
@@ -72,21 +58,8 @@ class Pipeline:
         self.train_df: Optional[pd.DataFrame] = None
         self.val_df: Optional[pd.DataFrame] = None
         self.test_df: Optional[pd.DataFrame] = None
-        self.model = None  # lgb.Booster for legacy, TwoStageModels for two_stage
-        self.residual_model = None
+        self.decision_models: Optional[Dict] = None
         self.metrics: Dict = {}
-        
-        # Load model if exists
-        if self.two_stage:
-            two_stage_file = self.MODEL_PATH / "two_stage_model.joblib"
-            if two_stage_file.exists():
-                self.model = load_two_stage_models(self.MODEL_PATH)
-        else:
-            model_file = self.MODEL_PATH / "model.joblib"
-            if model_file.exists():
-                data = joblib.load(model_file)
-            self.model = data["gbm"]
-            self.residual_model = data.get("residual_rf")
     
     def gather_data(self) -> pd.DataFrame:
         """Step 1: Extract raw gameweek data from database."""
@@ -126,113 +99,40 @@ class Pipeline:
         return self.train_df, self.val_df, self.test_df
     
     def train(self) -> None:
-        """Step 4: Train model(s) and save artifacts.
+        """Step 4: Train decision-specific models and save artifacts.
         
-        If two_stage=True: Trains both base and free_hit models.
-        Otherwise: Trains single LightGBM regressor.
-        
-        Two model variants:
-            - Base model (no cost): For Captain and Transfer decisions
-            - Free Hit model (with cost): For Free Hit optimization
+        Trains three decision-specific models:
+            - Captain model (18 features, position-conditional)
+            - Transfer model (16 features, baseline)
+            - Free Hit model (17 features, includes cost)
         """
         if self.train_df is None:
             raise ValueError("Call split() first")
         
         trainer = Trainer()
         
-        if self.two_stage:
-            # Epistemically-aligned two-stage training
-            # Research-validated: separates participation from performance
-            print("\n🎯 TWO-STAGE TRAINING (Epistemically Aligned)")
-            
-            # Train BASE model (no cost) for Captain/Transfer
-            print("\n--- BASE MODEL (Captain/Transfer) ---")
-            self.model = trainer.train_two_stage(self.train_df, include_cost=False)
-            
-            # Save base model
-            self.MODEL_PATH.mkdir(parents=True, exist_ok=True)
-            save_two_stage_models(self.model, self.MODEL_PATH)
-            print(f"Base model saved to {self.MODEL_PATH}")
-            
-            # Train FREE HIT model (with cost) for Free Hit
-            print("\n--- FREE HIT MODEL (with cost) ---")
-            self.free_hit_model = trainer.train_two_stage(self.train_df, include_cost=True)
-            
-            # Save free hit model
-            free_hit_path = self.MODEL_PATH / "free_hit_model.joblib"
-            joblib.dump({
-                "p_play": self.free_hit_model.p_play,
-                "mu_points": self.free_hit_model.mu_points,
-                "feature_cols": self.free_hit_model.feature_cols,
-            }, free_hit_path)
-            print(f"Free Hit model saved to {free_hit_path}")
-        else:
-            # Legacy single-model training
-            # Apply conditional training filter if enabled
-            if self.conditional_on_play:
-                train_data = self.train_df[self.train_df["minutes"] > 0].copy()
-                print(f"Conditional training: {len(train_data):,} / {len(self.train_df):,} rows (minutes > 0)")
-            else:
-                train_data = self.train_df
-            
-            # Train LightGBM
-            self.model = trainer.train(train_data)
-            
-            # Predict on training data (don't use self.predict yet - residual_model not ready)
-            X = train_data[FEATURE_COLUMNS].values
-            predictions = self.model.predict(X)
-            
-            # Train residual model (on same filtered data)
-            self.residual_model = trainer.train_residuals(train_data, predictions)
-            
-            # Save
-            self.MODEL_PATH.mkdir(parents=True, exist_ok=True)
-            model_path = self.MODEL_PATH / "model.joblib"
-            joblib.dump({
-                "gbm": self.model,
-                "residual_rf": self.residual_model,
-                "feature_cols": FEATURE_COLUMNS,
-            }, model_path)
-            print(f"Model saved to {model_path}")
+        # Train decision-specific models
+        print("\n🎯 DECISION-SPECIFIC TRAINING")
+        print("=" * 60)
+        self.decision_models = trainer.train_all_models(self.train_df, self.MODEL_PATH)
     
-    def predict(self, df: pd.DataFrame) -> pd.DataFrame:
+    def predict(self, df: pd.DataFrame, decision: str = "transfer") -> pd.DataFrame:
         """Run model predictions on a DataFrame.
         
-        Output is always: predicted_points
-        
-        For two-stage: predicted_points = p_play × mu_points
-        For legacy: predicted_points = gbm.predict(X)
+        Uses decision-specific models via registry.
         
         Args:
             df: DataFrame with feature columns (train, val, or test).
+            decision: Which decision model to use ("captain", "transfer", "free_hit")
             
         Returns:
-            DataFrame with predicted_points (and optionally p_play, mu_points, uncertainty).
+            DataFrame with predicted_points column.
         """
-        result = df.copy()
-        X = df[FEATURE_COLUMNS].values
+        from dugout.production.models.registry import get_model
         
-        if self.two_stage:
-            # Load two-stage model if needed
-            if self.model is None or not isinstance(self.model, TwoStageModels):
-                self.model = load_two_stage_models(self.MODEL_PATH)
-            
-            # Two-stage prediction: p_play × mu_points
-            components = self.model.predict_components(X)
-            result["p_play"] = components["p_play"]
-            result["mu_points"] = components["mu_points"]
-            result["predicted_points"] = components["predicted_points"]
-        else:
-            # Legacy single-model prediction
-            if self.model is None:
-                data = joblib.load(self.MODEL_PATH / "model.joblib")
-                self.model = data["gbm"]
-                self.residual_model = data.get("residual_rf")
-            
-            result["predicted_points"] = self.model.predict(X)
-            
-            if self.residual_model is not None:
-                result["uncertainty"] = self.residual_model.predict(X)
+        result = df.copy()
+        model = get_model(decision)
+        result["predicted_points"] = model.predict(df)
         
         return result
     
@@ -240,11 +140,11 @@ class Pipeline:
         """Step 5: Evaluate model on all splits."""
         if self.train_df is None:
             raise ValueError("Call split() first")
-        if self.model is None:
+        if self.decision_models is None:
             raise ValueError("Call train() first")
         
         def eval_split(df: pd.DataFrame, name: str) -> Dict:
-            pred_df = self.predict(df)
+            pred_df = self.predict(df, decision="transfer")
             y = df["total_points"].values
             pred = pred_df["predicted_points"].values
             
@@ -262,7 +162,7 @@ class Pipeline:
         }
         
         # Add model type to metrics
-        self.metrics["model_type"] = "two_stage" if self.two_stage else "single"
+        self.metrics["model_type"] = "decision_specific"
         
         return self.metrics
     
@@ -276,13 +176,9 @@ class Pipeline:
         print(f"Report saved to {report_path}")
     
     @classmethod
-    def run(cls, two_stage: bool = False) -> "Pipeline":
-        """Run full pipeline end-to-end.
-        
-        Args:
-            two_stage: If True, use epistemically-aligned two-stage modeling.
-        """
-        pipeline = cls(two_stage=two_stage)
+    def run(cls) -> "Pipeline":
+        """Run full pipeline end-to-end."""
+        pipeline = cls()
         pipeline.gather_data()
         pipeline.build_features()
         pipeline.split()

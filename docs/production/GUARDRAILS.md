@@ -2,65 +2,55 @@
 
 ## Model Configuration
 
-### Current State
-- **Default model**: `two_stage` (p_play × mu_points)
-- **Fallback model**: `legacy` (single GBM)
-- **Model location**: See `config.py:DEFAULT_MODEL_PATH`
+### Decision-Specific Model Architecture
+
+Each decision uses its own specialized model optimized for that use case:
+
+| Model | Features | Use Case |
+|-------|----------|----------|
+| `CaptainModel` | 18 (position-conditional) | Captain pick |
+| `TransferModel` | 16 (baseline) | Transfer recommendations |
+| `FreeHitModel` | 17 (baseline + cost) | Free Hit optimization |
+
+**Model location**: `storage/production/models/lightgbm_v2/`
 
 ### Model Files
-| File | Description | Status |
-|------|-------------|--------|
-| `two_stage_model.joblib` | Epistemically-aligned model | Primary |
-| `model.joblib` | Legacy single-stage model | Fallback |
+| File | Description |
+|------|-------------|
+| `captain_model.joblib` | 18-feature position-conditional model |
+| `transfer_model.joblib` | 16-feature baseline model |
+| `free_hit_model.joblib` | 17-feature model with cost awareness |
+| `model.joblib` | Legacy (kept for backward compatibility) |
 
-### Selection Logic
+### Model Registry
 ```python
-if two_stage_model.joblib exists:
-    use two_stage (p_play × mu_points)
-else:
-    use legacy (single GBM)
+from dugout.production.models import get_model
+
+CaptainModel = get_model("captain")
+TransferModel = get_model("transfer")
+FreeHitModel = get_model("free_hit")
 ```
 
 ## Guardrails
 
-### Single Inference Entry Point
-- All decisions MUST use `predict_points()` from `dugout.production.models.predict`
-- Direct model loading is FORBIDDEN in decision scripts
-- Backtests use their own training loop but respect `model_type` parameter
+### Decision-Model Binding
+Each decision module loads its own model via registry:
+- `captain.py` → `CaptainModel` via `get_model("captain")`
+- `transfer.py` → `TransferModel` via `get_model("transfer")`
+- `free_hit.py` → `FreeHitModel` via `get_model("free_hit")`
 
 ### Runtime Contract Assertions
 Decision functions enforce:
 - ❌ No research module imports
 - ❌ No fixture difficulty signals
-- ❌ No availability weighting
 - ❌ No forbidden signals (p_play, p60, fixture_weight, weighted_ev)
 
 Violations raise `RuntimeError` with explicit message.
 
-### Model Type Logging
+### Model Logging
 All decision outputs include:
-- `model_type` field in CSV exports
-- `Model: two_stage` in CLI output
+- Model type in CLI output
 - `Using data through GW{N}` context
-
-## Kill Switch (Rollback)
-
-To revert to legacy model:
-```bash
-cd storage/production/models/<current_version>
-mv two_stage_model.joblib two_stage_model.joblib.disabled
-```
-
-Decision scripts automatically fall back to `model.joblib`.
-
-## Removal Criteria
-
-Two-stage model becomes sole model when:
-1. ✅ Backtest regret improvement validated (4 pts/GW lower)
-2. ⬜ 3+ live GWs without rollback needed
-3. ⬜ No silent failures in production logs
-
-Until all criteria met, both models remain available.
 
 ## Decision Modules
 
@@ -72,17 +62,20 @@ Until all criteria met, both models remain available.
 
 ## CLI Scripts
 
-| Script | Model Used | Outputs model_type |
-|--------|------------|-------------------|
-| `scripts/decisions/captain_cli.py` | auto-detect | ✅ |
-| `scripts/decisions/free_hit_cli.py` | auto-detect | ✅ |
-| `scripts/backtests/decisions/captain_backtest.py` | `--model-type` flag | ✅ |
+| Script | Model Used |
+|--------|------------|
+| `scripts/decisions/captain_cli.py` | CaptainModel |
+| `scripts/decisions/transfer_cli.py` | TransferModel |
+| `scripts/decisions/free_hit_cli.py` | FreeHitModel |
 
-## Backtest Comparison
+## Backtest Scripts
 
 ```bash
-# Compare legacy vs two-stage regret
-PYTHONPATH=src python scripts/backtests/decisions/captain_backtest.py --compare-models
+# Walk-forward validation
+PYTHONPATH=src python scripts/backtests/models/walk_forward_validation.py
+
+# Captain regret analysis
+PYTHONPATH=src python scripts/backtests/decisions/captain_backtest.py
 ```
 
-Results show per-GW and summary regret metrics for both models.
+Results show per-GW and summary regret metrics.

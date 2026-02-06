@@ -29,7 +29,7 @@ from dugout.production.data.reader import DataReader
 from dugout.production.features.builder import FeatureBuilder
 from dugout.production.features.definitions import FEATURE_COLUMNS
 from dugout.production.config import DEFAULT_DB_PATH
-from dugout.production.models.predict import predict_points
+from dugout.production.models.registry import get_model
 
 
 @dataclass
@@ -135,9 +135,14 @@ def run_transfer_backtest(
             print(f"  Skipping GW{target_gw}: no eligible players")
             continue
         
-        # Predict expected points using unified interface
-        # Uses base model (no cost) for pure ranking
-        eligible_df["predicted_points"] = predict_points(eligible_df, model_variant="base")
+        # Predict expected points using TransferModel (baseline features)
+        # Falls back to legacy predict_points if transfer_model.joblib not available
+        try:
+            transfer_model = get_model("transfer")
+            eligible_df["predicted_points"] = transfer_model.predict(eligible_df)
+        except FileNotFoundError:
+            from dugout.production.models.predict import predict_points
+            eligible_df["predicted_points"] = predict_points(eligible_df, model_variant="base")
         
         # Decision: argmax(predicted_points)
         chosen_idx = eligible_df["predicted_points"].idxmax()

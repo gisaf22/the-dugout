@@ -3,12 +3,15 @@
 Decision Rule (Frozen): argmax(predicted_points)
 Validated by research pipeline Stage 6d.
 
+Predictor meaning: μ(points | plays), position-conditional
+Uses CaptainModel with defensive features for DEF/GKP.
+
 CONTRACT ENFORCEMENT:
     - Any modification requires updating DECISION_CONTRACT_LAYER.md
     - Any modification requires re-running research pipeline Stage 6
     
-GUARDRAIL: Must use predict_points() from dugout.production.models.predict.
-           Direct model loading is FORBIDDEN.
+GUARDRAIL: Must use CaptainModel from dugout.production.models.captain_model.
+           No shared prediction code paths.
 """
 
 import pandas as pd
@@ -16,9 +19,8 @@ from typing import Tuple, Optional
 
 from dugout.production.data.reader import DataReader
 from dugout.production.features.builder import FeatureBuilder
-from dugout.production.features.definitions import FEATURE_COLUMNS
 from dugout.production.config import MODEL_DIR
-from dugout.production.models.predict import predict_points, get_last_model_type, get_active_model_type
+from dugout.production.models.registry import get_model
 
 # Signals that are FORBIDDEN in captain decision (research-rejected)
 FORBIDDEN_SIGNALS = {"p_play", "p60", "weighted_ev", "availability_weight"}
@@ -125,11 +127,18 @@ def get_captain_candidates(
     unavailable = ["n", "i", "s", "u"]
     latest_df = latest_df[~latest_df["status"].isin(unavailable)].copy()
     
-    # Predict using unified interface (supports two-stage and legacy)
-    # GUARDRAIL: This is the ONLY place predictions are made
-    # Uses base model (no cost) - Captain is pure ranking, cost irrelevant
-    latest_df["predicted_points"] = predict_points(latest_df, model_variant="base")
-    model_type = get_last_model_type()
+    # Load captain-specific model (position-conditional defensive features)
+    # GUARDRAIL: This is the ONLY place captain predictions are made
+    # See docs/research/decision_specific_modeling.md for ablation evidence
+    try:
+        captain_model = get_model("captain")
+        latest_df["predicted_points"] = captain_model.predict(latest_df)
+        model_type = "captain"
+    except FileNotFoundError:
+        # Fallback: use legacy predict_points if captain model not trained
+        from dugout.production.models.predict import predict_points, get_last_model_type
+        latest_df["predicted_points"] = predict_points(latest_df, model_variant="base")
+        model_type = f"legacy_fallback ({get_last_model_type()})"
     
     # Add display columns (opponent, is_home for output only)
     latest_df["opponent_short"] = latest_df["team_id"].map(

@@ -27,8 +27,8 @@ Three decisions. One rule: `argmax(predicted_points)`
 │                                                                              │
 │  ┌────────────────┐   ┌─────────────────┐   ┌────────────────────┐          │
 │  │ fpl_2025_26.db │   │ predicted_pts   │   │ Captain            │          │
-│  │ DataReader     │   │ p_play          │   │ Transfer-In        │          │
-│  │ Pydantic       │   │ mu_points       │   │ Free Hit           │          │
+│  │ DataReader     │   │ (decision-      │   │ Transfer-In        │          │
+│  │ Pydantic       │   │  specific)      │   │ Free Hit           │          │
 │  │ schemas        │   │                 │   │                    │          │
 │  └────────────────┘   └─────────────────┘   └────────────────────┘          │
 │                                                                              │
@@ -75,28 +75,33 @@ DataReader.get_next_gameweek()            # Upcoming GW number
 
 ## Layer 2: ML Signal Generation
 
-### Two-Stage Prediction Model
-```
-Stage 1: p_play    — P(minutes > 0)      — LightGBM classifier on all rows
-Stage 2: mu_points — E[points | plays]   — LightGBM regressor on rows with minutes > 0
+### Decision-Specific Models
 
-Final:  predicted_points = p_play × mu_points
-```
+Each decision uses its own specialized LightGBM model:
 
-This separates "did not play" from "played badly" — the research-validated approach.
+| Model | Features | Purpose |
+|-------|----------|---------|
+| `CaptainModel` | 18 | Position-conditional for captain picks |
+| `TransferModel` | 16 | Baseline for transfer recommendations |
+| `FreeHitModel` | 17 | Cost-aware for squad optimization |
+
+Models are accessed via registry:
+```python
+from dugout.production.models import get_model
+model_class = get_model("captain")  # Returns CaptainModel
+```
 
 ### Signal Definitions
 
 | Signal | Source | Description |
 |--------|--------|-------------|
-| `predicted_points` | Two-stage model | p_play × mu_points |
-| `p_play` | Classifier | Probability of playing (minutes > 0) |
-| `mu_points` | Regressor | Expected points conditional on playing |
+| `predicted_points` | Decision model | Expected FPL points next GW |
 
 ### Feature Engineering (`src/dugout/production/features/`)
 - Rolling statistics over last 5 games (mean, sum, variance)
 - Recent form indicators (appearances, minutes fraction)
 - Fixture context (home/away)
+- Decision-specific feature views (CAPTAIN_FEATURES, TRANSFER_FEATURES, FREE_HIT_FEATURES)
 
 ---
 
@@ -206,10 +211,7 @@ User asks: "Who should I captain?"
 
 1. DataReader loads player history (last 5 GWs)
 2. FeatureBuilder computes rolling stats
-3. Two-stage model predicts:
-   - p_play = P(minutes > 0)
-   - mu_points = E[points | plays]
-   - predicted_points = p_play × mu_points
+3. CaptainModel predicts predicted_points
 4. Decision: argmax(predicted_points)
 ```
 
@@ -217,12 +219,13 @@ User asks: "Who should I captain?"
 
 ## Key Design Decisions
 
-### Why Two-Stage Prediction?
-Minutes and points are fundamentally different:
-- Participation: Rotation, fitness, manager preference (classification)
-- Performance: Goals, assists, bonus (regression)
+### Why Decision-Specific Models?
+Each decision has different requirements:
+- **Captain**: Position-conditional features (18 features) - GK/DEF vs MID/FWD behave differently
+- **Transfer**: Baseline features (16 features) - Simple ranking without ownership bias
+- **Free Hit**: Cost-aware features (17 features) - Value optimization requires price signals
 
-Separating them avoids the "Guardiola problem" where a benched player gets high expected points.
+This allows each model to focus on features most relevant to its decision context.
 
 ---
 

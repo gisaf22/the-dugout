@@ -38,7 +38,9 @@ DEFAULT_DB_PATH = os.environ.get(
 )
 
 # Model artifacts
-DEFAULT_MODEL_PATH = MODELS_DIR / "lightgbm_v2" / "two_stage_model.joblib"
+# NOTE: Legacy single-stage is production default (lower captain regret).
+# Two-stage remains available for research/interpretation.
+DEFAULT_MODEL_PATH = MODELS_DIR / "lightgbm_v2" / "model.joblib"
 
 # FPL API
 FPL_BASE_URL = "https://fantasy.premierleague.com/api"

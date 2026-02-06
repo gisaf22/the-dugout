@@ -7,8 +7,8 @@ CONTRACT ENFORCEMENT:
     - Any modification requires updating DECISION_CONTRACT_LAYER.md
     - Any modification requires re-running research pipeline Stage 7
     
-GUARDRAIL: Must use predict_points() from dugout.production.models.predict.
-           Direct model loading is FORBIDDEN.
+GUARDRAIL: Uses TransferModel via registry (baseline features only).
+           See docs/research/decision_specific_modeling.md for ablation results.
 """
 
 import pandas as pd
@@ -18,7 +18,7 @@ from dugout.production.data.reader import DataReader
 from dugout.production.features.builder import FeatureBuilder
 from dugout.production.features.definitions import FEATURE_COLUMNS
 from dugout.production.config import MODEL_DIR
-from dugout.production.models.predict import predict_points, get_last_model_type
+from dugout.production.models.registry import get_model
 
 # Signals that are FORBIDDEN in transfer decision (research-rejected)
 FORBIDDEN_SIGNALS = {"p_play", "p60", "weighted_ev", "availability_weight"}
@@ -134,11 +134,18 @@ def get_transfer_recommendations(
     if exclude_ids:
         latest_df = latest_df[~latest_df["player_id"].isin(exclude_ids)].copy()
     
-    # Predict using unified interface (supports two-stage and legacy)
-    # GUARDRAIL: This is the ONLY place predictions are made
-    # Uses base model (no cost) - Transfer ranks by pure expected points
-    latest_df["predicted_points"] = predict_points(latest_df, model_variant="base")
-    model_type = get_last_model_type()
+    # Predict using TransferModel (baseline features, no defensive features)
+    # GUARDRAIL: This is the ONLY place predictions are made for transfer
+    # See docs/research/decision_specific_modeling.md for ablation results
+    try:
+        transfer_model = get_model("transfer")
+        latest_df["predicted_points"] = transfer_model.predict(latest_df)
+        model_type = "transfer_model"
+    except FileNotFoundError:
+        # Fallback to legacy predict_points if transfer_model.joblib not trained yet
+        from dugout.production.models.predict import predict_points, get_last_model_type
+        latest_df["predicted_points"] = predict_points(latest_df, model_variant="base")
+        model_type = get_last_model_type()
     
     # Contract assertion - verify no forbidden signals leaked in
     forbidden_present = FORBIDDEN_SIGNALS.intersection(latest_df.columns)

@@ -6,6 +6,7 @@ into ML-ready feature vectors. Key responsibilities:
 - Rolling statistics from last 5 games
 - Form indicators (appearances, minutes fraction)
 - Start probability estimation
+- Opponent context features (xG/xGC rolling averages)
 
 Key Classes:
     FeatureBuilder - Transforms raw data to feature vectors
@@ -88,6 +89,7 @@ class FeatureBuilder:
         per90_wmean, per90_wvar = self._compute_per90_features(last5)
         rolling = self._compute_minutes_stats(last5)
         stats = self._compute_detailed_stats(last5)
+        defensive = self._compute_defensive_stats(last5)
         
         # Player state
         cost_val = self._normalize_cost(last_row.get('now_cost', 0))
@@ -105,6 +107,9 @@ class FeatureBuilder:
             
             # Detailed stats
             **stats,
+            
+            # Defensive stats (for captain position-conditional)
+            **defensive,
         }
         
         # Interaction features - products that capture combined effects:
@@ -191,6 +196,34 @@ class FeatureBuilder:
             'ict_per90': to_per90(self._safe_sum(last5, 'ict_index')),
             'xg_per90': to_per90(xg_total),
             'xa_per90': to_per90(xa_total),
+        }
+    
+    def _compute_defensive_stats(self, last5: pd.DataFrame) -> Dict[str, float]:
+        """Compute defensive performance stats from last 5 games.
+        
+        Features for captain position-conditional model:
+            - xgc_per90: Expected goals conceded per 90 (lower = better defense)
+            - clean_sheet_rate: Proportion of games with clean sheet
+        
+        These are meaningful for DEF/GKP but should be zeroed for MID/FWD.
+        See docs/research/decision_specific_modeling.md for ablation evidence.
+        """
+        total_mins = last5['minutes'].sum() if 'minutes' in last5.columns else 0
+        games_played = (last5['minutes'] > 0).sum() if 'minutes' in last5.columns else 0
+        
+        # Handle xGC column name variants
+        xgc_total = self._safe_sum(last5, 'xGC') or self._safe_sum(last5, 'expected_goals_conceded')
+        
+        # Per90 calculation
+        xgc_per90 = (xgc_total / total_mins * 90) if total_mins > 0 else 0.0
+        
+        # Clean sheet rate (proportion of games with CS)
+        cs_total = self._safe_sum(last5, 'clean_sheets')
+        cs_rate = cs_total / games_played if games_played > 0 else 0.0
+        
+        return {
+            'xgc_per90': xgc_per90,
+            'clean_sheet_rate': cs_rate,
         }
     
     def _normalize_cost(self, now_cost: Any) -> float:

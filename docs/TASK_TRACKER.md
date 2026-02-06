@@ -21,9 +21,9 @@ Three decisions supported, all using frozen `argmax(predicted_points)` rule.
 
 | Task | Status | Notes |
 |------|--------|-------|
-| Two-stage model | ✅ Done | p_play × mu_points |
+| Decision-specific models | ✅ Done | Captain (18), Transfer (16), FreeHit (17) features |
 | Epistemic alignment | ✅ Done | Research → Production |
-| Model transition guardrails | ✅ Done | model_type logging |
+| Model registry | ✅ Done | `get_model("captain")` |
 | Captain backtest | ✅ Done | 4 pts/GW regret reduction |
 | Free Hit optimizer | ✅ Done | LP with PuLP |
 | Decision contract enforcement | ✅ Done | Runtime assertions |
@@ -60,5 +60,5 @@ Three decisions supported, all using frozen `argmax(predicted_points)` rule.
 ## Notes
 
 - Production code is frozen — changes require research validation
-- Two-stage model is default, legacy is fallback
+- Decision-specific models: CaptainModel, TransferModel, FreeHitModel
 - Deferred features tracked in `DEFERRED_FEATURES.md`

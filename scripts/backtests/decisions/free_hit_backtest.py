@@ -32,7 +32,7 @@ from dugout.production.features.builder import FeatureBuilder
 from dugout.production.features.definitions import FEATURE_COLUMNS
 from dugout.production.config import DEFAULT_DB_PATH
 from dugout.production.models.squad import FreeHitOptimizer
-from dugout.production.models.predict import predict_points
+from dugout.production.models.registry import get_model
 
 
 @dataclass
@@ -148,9 +148,14 @@ def run_free_hit_backtest(
             print(f"  Skipping GW{target_gw}: only {len(eligible_df)} eligible players")
             continue
         
-        # Predict expected points using unified interface
-        # Uses free_hit model (with cost) for budget-constrained optimization
-        eligible_df["predicted_points"] = predict_points(eligible_df, model_variant="free_hit")
+        # Predict expected points using FreeHitModel (baseline + cost)
+        # Falls back to legacy predict_points if free_hit_model.joblib not available
+        try:
+            free_hit_model = get_model("free_hit")
+            eligible_df["predicted_points"] = free_hit_model.predict(eligible_df)
+        except FileNotFoundError:
+            from dugout.production.models.predict import predict_points
+            eligible_df["predicted_points"] = predict_points(eligible_df, model_variant="free_hit")
         
         # Get actual points for target_gw
         actual_df = raw_df[raw_df["gw"] == target_gw][
